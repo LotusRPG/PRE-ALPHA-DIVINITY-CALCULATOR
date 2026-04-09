@@ -38,7 +38,7 @@ const SCHEMA = {
     },
     {
       label: 'Combat Config',
-      sections: ['formula', 'fabledAttributes', 'skills'],
+      sections: ['formula', 'fabledAttributes', 'skills', 'classes'],
     },
     {
       label: 'Stats',
@@ -261,6 +261,17 @@ const SCHEMA = {
       multiFile:   true,
       renderer:    'renderSkills',
       description: 'Fabled/SkillAPI skill definitions — one .yml per skill. Read-only; item gen reads available skill names from here.',
+    },
+
+    classes: {
+      id:          'classes',
+      label:       'Classes',
+      icon:        '🧙',
+      badge:       true,
+      file:        'classes/',
+      multiFile:   true,
+      renderer:    'renderClasses',
+      description: 'Fabled/SkillAPI class definitions — one .yml per class. Read-only; item gen uses class names in Requirements.',
     },
 
     ammo: {

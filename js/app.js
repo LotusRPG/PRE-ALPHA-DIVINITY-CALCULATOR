@@ -90,6 +90,41 @@ function countEntries(data) {
   return Object.values(data).filter(v => v && typeof v === 'object').length;
 }
 
+/**
+ * Per-section YAML slim-down: strip unnecessary fields after loading single-file sections.
+ * Keeps only what Builder needs, reducing JSON export size significantly.
+ */
+const SECTION_SLIM = {
+  fabledAttributes(data) {
+    const out = {};
+    Object.entries(data).forEach(([k, v]) => {
+      if (v && typeof v === 'object')
+        out[k] = { display: v.display ?? k, max: v.max ?? '', 'icon-lore': v['icon-lore'] ?? [] };
+    });
+    return out;
+  },
+};
+
+/**
+ * Per-section YAML slim-down for multiFile sections (applied per loaded file).
+ */
+const SECTION_FILE_SLIM = {
+  skills(fileData) {
+    const out = {};
+    Object.entries(fileData).forEach(([k, v]) => {
+      if (v && typeof v === 'object') out[k] = { name: v.name ?? k };
+    });
+    return out;
+  },
+  classes(fileData) {
+    const out = {};
+    Object.entries(fileData).forEach(([k, v]) => {
+      if (v && typeof v === 'object') out[k] = { name: v.name ?? k };
+    });
+    return out;
+  },
+};
+
 /** Load one YAML file into a multiFile section's files map. */
 async function loadMultiFile(sid, file) {
   if (!STATE.loaded[sid] || !STATE.loaded[sid]._multiFile) {
@@ -99,7 +134,9 @@ async function loadMultiFile(sid, file) {
     const r = new FileReader();
     r.onload = e => {
       try {
-        STATE.loaded[sid].files[file.name] = YAML.parse(e.target.result);
+        let parsed = YAML.parse(e.target.result);
+        if (SECTION_FILE_SLIM[sid]) parsed = SECTION_FILE_SLIM[sid](parsed);
+        STATE.loaded[sid].files[file.name] = parsed;
         delete STATE.errors[sid];
       } catch (err) {
         STATE.errors[sid] = err.message;
@@ -339,7 +376,9 @@ function updateBadge(sid) {
 
 function parseAndStore(sid, text) {
   try {
-    STATE.loaded[sid] = YAML.parse(text);
+    let parsed = YAML.parse(text);
+    if (SECTION_SLIM[sid]) parsed = SECTION_SLIM[sid](parsed);
+    STATE.loaded[sid] = parsed;
     delete STATE.errors[sid];
   } catch (e) {
     delete STATE.loaded[sid];
@@ -874,6 +913,90 @@ const APP = {
     setPath(files[fname], path, obj);
   },
 
+  /** Update a single key inside a type-picker object (ammo-types / hand-types). */
+  igUpdateTypeWeight(sid, fname, path, typeKey, weight) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const file = files[fname];
+    let obj = getPath(file, path);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      setPath(file, path, {});
+      obj = getPath(file, path);
+    }
+    obj[typeKey] = weight;
+  },
+
+  /* ── Bonus entry helpers ─────────────────────────────────── */
+
+  /** Remove a single key from an object at path inside an ig file. */
+  igBonusRemoveKey(sid, fname, path, key) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const obj = getPath(files[fname], path);
+    if (obj && typeof obj === 'object') {
+      delete obj[key];
+      renderSection(_activeSection);
+    }
+  },
+
+  /** Add a key with a default value to an object at path inside an ig file. */
+  igBonusAddKey(sid, fname, path, key, defaultVal = 1) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const file = files[fname];
+    let obj = getPath(file, path);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      setPath(file, path, {});
+      obj = getPath(file, path);
+    }
+    if (!Object.prototype.hasOwnProperty.call(obj, key)) {
+      obj[key] = defaultVal;
+    }
+    renderSection(_activeSection);
+  },
+
+  /** Add a blank entry to one of the 3 bonus categories (material-modifiers / material / class). */
+  igBonusAddEntry(sid, fname, bonusCat) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const file = files[fname];
+    const path = `generator.bonuses.${bonusCat}`;
+    let cat = getPath(file, path);
+    if (!cat || typeof cat !== 'object' || Array.isArray(cat)) {
+      setPath(file, path, {});
+      cat = getPath(file, path);
+    }
+    const key = 'new-entry-' + Date.now();
+    cat[key] = {};
+    renderSection(_activeSection);
+  },
+
+  /** Remove a named entry from a bonus category. */
+  igBonusRemoveEntry(sid, fname, bonusCat, key) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const cat = getPath(files[fname], `generator.bonuses.${bonusCat}`);
+    if (cat && typeof cat === 'object') {
+      delete cat[key];
+      renderSection(_activeSection);
+    }
+  },
+
+  /** Rename a bonus entry key, preserving insertion order. */
+  igBonusRenameEntry(sid, fname, bonusCat, oldKey, newKey) {
+    if (oldKey === newKey || !newKey) return;
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const path = `generator.bonuses.${bonusCat}`;
+    const cat  = getPath(files[fname], path);
+    if (!cat || typeof cat !== 'object') return;
+    if (Object.prototype.hasOwnProperty.call(cat, newKey)) return; // already exists
+    const reordered = {};
+    Object.keys(cat).forEach(k => { reordered[k === oldKey ? newKey : k] = cat[k]; });
+    setPath(files[fname], path, reordered);
+    renderSection(_activeSection);
+  },
+
   /** Add a new blank skill entry to generator.skills.list (or any skills path). */
   igAddSkill(sid, fname, basePath) {
     const files = STATE.loaded[sid]?.files;
@@ -1180,11 +1303,24 @@ const APP = {
       pool = getPath(file, poolPath);
     }
     ids.forEach(id => {
-      if (!Object.prototype.hasOwnProperty.call(pool, id)) {
-        pool[id] = JSON.parse(JSON.stringify(STAT_DEFAULT));
+      // Normalize pool key to lowercase-underscore to avoid capitalization duplicates
+      const poolKey = id.toLowerCase().replace(/[\s-]+/g, '_');
+      if (!Object.prototype.hasOwnProperty.call(pool, poolKey)) {
+        pool[poolKey] = JSON.parse(JSON.stringify(STAT_DEFAULT));
       }
     });
 
+    renderSection(_activeSection);
+  },
+
+  /** Add a raw entry to any plain-object section (ammo, hand, etc.) without STATS-specific logic. */
+  addRawEntry(sid, key, template) {
+    key = key.trim();
+    if (!key) return;
+    const data = STATE.loaded[sid];
+    if (!data || typeof data !== 'object') return;
+    if (Object.prototype.hasOwnProperty.call(data, key)) { alert(`"${key}" already exists.`); return; }
+    data[key] = JSON.parse(JSON.stringify(template));
     renderSection(_activeSection);
   },
 
@@ -1567,12 +1703,25 @@ Object.assign(APP, {
         }
         let count = 0;
         Object.entries(snapshot.sections).forEach(([sid, data]) => {
-          if (SCHEMA.sections[sid]) {
-            STATE.loaded[sid] = data;
-            delete STATE.errors[sid];
-            updateBadge(sid);
-            count++;
+          if (!SCHEMA.sections[sid]) return;
+          // Re-apply slimming so old snapshots with full data are also trimmed
+          if (SECTION_SLIM[sid] && data && typeof data === 'object' && !data._multiFile) {
+            data = SECTION_SLIM[sid](data);
           }
+          if (data && data._multiFile && data.files) {
+            const slim = SECTION_FILE_SLIM[sid];
+            if (slim) {
+              const slimmedFiles = {};
+              Object.entries(data.files).forEach(([fname, fdata]) => {
+                slimmedFiles[fname] = slim(fdata);
+              });
+              data = { ...data, files: slimmedFiles };
+            }
+          }
+          STATE.loaded[sid] = data;
+          delete STATE.errors[sid];
+          updateBadge(sid);
+          count++;
         });
         alert(`✅ Imported ${count} section(s) from snapshot (v${snapshot.version || '?'}, exported ${snapshot.exported || 'unknown'}).`);
         renderSection(_activeSection);

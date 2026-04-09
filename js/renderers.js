@@ -1178,15 +1178,42 @@ function igSkillsList(sid, fname, basePath, skillsData) {
   if (!skillsData || typeof skillsData !== 'object') skillsData = {};
   const listPath = `${basePath}.list`;
   const list     = skillsData.list ?? {};
+
+  // Collect available skill names from STATE.loaded.skills (multiFile)
+  const loadedSkills = STATE.loaded?.skills;
+  const skillNames = [];
+  if (loadedSkills?._multiFile) {
+    Object.values(loadedSkills.files || {}).forEach(fileData => {
+      Object.values(fileData || {}).forEach(entry => {
+        if (entry?.name && !skillNames.includes(entry.name)) skillNames.push(entry.name);
+      });
+    });
+  }
+  skillNames.sort();
+
+  function skillNameInput(key) {
+    if (skillNames.length > 0) {
+      // Dropdown with free-text fallback: use <datalist>
+      const listId = `skill-opts-${sid}-${escJs(fname)}-${escJs(key)}`.replace(/[^a-z0-9]/gi, '_');
+      return `
+        <input class="edit-input" style="flex:1;min-width:120px" value="${esc(key)}" title="Skill name (choose from list or type custom)"
+          list="${listId}"
+          onblur="if(this.value.trim()&&this.value.trim()!=='${escJs(key)}')APP.igRenameSkill('${sid}','${escJs(fname)}','${escJs(listPath)}','${escJs(key)}',this.value.trim())"
+          onkeydown="if(event.key==='Enter')this.blur()">
+        <datalist id="${listId}">${skillNames.map(n => `<option value="${esc(n)}">`).join('')}</datalist>`;
+    }
+    return `<input class="edit-input" style="flex:1;min-width:120px" value="${esc(key)}" title="Skill name"
+      onblur="if(this.value.trim()&&this.value.trim()!=='${escJs(key)}')APP.igRenameSkill('${sid}','${escJs(fname)}','${escJs(listPath)}','${escJs(key)}',this.value.trim())"
+      onkeydown="if(event.key==='Enter')this.blur()">`;
+  }
+
   const skillEntries = Object.entries(list).map(([key, sk]) => {
     if (!sk || typeof sk !== 'object') return '';
     const loreLines = sk['lore-format'] ?? [];
     return `
       <div style="border:1px solid #333;border-radius:4px;margin-bottom:6px;padding:8px 10px;background:#1a1a1a">
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
-          <input class="edit-input" style="flex:1;min-width:120px" value="${esc(key)}" title="Skill name"
-            onblur="if(this.value.trim()&&this.value.trim()!=='${escJs(key)}')APP.igRenameSkill('${sid}','${escJs(fname)}','${escJs(listPath)}','${escJs(key)}',this.value.trim())"
-            onkeydown="if(event.key==='Enter')this.blur()">
+          ${skillNameInput(key)}
           <span class="muted" style="font-size:11px">chance%</span>
           <input class="edit-input edit-input--num" style="width:60px" type="number" min="0" max="100"
             value="${esc(sk.chance ?? 0)}" title="Chance 0–100"
@@ -1208,6 +1235,10 @@ function igSkillsList(sid, fname, basePath, skillsData) {
       </div>`;
   }).join('');
 
+  const skillHint = skillNames.length
+    ? `<p class="muted small" style="margin-top:4px">Loaded skills: ${skillNames.map(n => `<code>${esc(n)}</code>`).join(', ')}</p>`
+    : `<p class="muted small" style="margin-top:4px">Load skills files in <b>Combat Config → Skills</b> to enable dropdown.</p>`;
+
   return `
     <div class="info-row">
       <span class="info-label">Min / Max skills</span>
@@ -1217,9 +1248,213 @@ function igSkillsList(sid, fname, basePath, skillsData) {
         ${igNum(sid, fname, `${basePath}.maximum`, skillsData.maximum ?? 0)}
       </div>
     </div>
+    ${skillHint}
     <div style="margin-top:8px">${skillEntries || '<p class="muted small">No skills defined yet.</p>'}</div>
     <button class="btn-add-entry" style="margin-top:4px"
       onclick="APP.igAddSkill('${sid}','${escJs(fname)}','${escJs(basePath)}')">+ Add skill</button>`;
+}
+
+/**
+ * Render ammo-types or hand-types picker.
+ * If the matching section is loaded, shows weight inputs per type.
+ * Otherwise falls back to igLineKvField.
+ */
+function igTypePicker(sid, fname, path, currentVal, loadedSection, fallbackPlaceholder) {
+  const loaded = STATE.loaded?.[loadedSection];
+  const current = (currentVal && typeof currentVal === 'object' && !Array.isArray(currentVal)) ? currentVal : {};
+
+  if (!loaded || typeof loaded !== 'object' || loaded._multiFile) {
+    // Fallback: free-form kv textarea
+    return igLineKvField(sid, fname, path, current, fallbackPlaceholder);
+  }
+
+  const typeKeys = Object.keys(loaded).filter(k => !k.startsWith('_'));
+  if (typeKeys.length === 0) {
+    return igLineKvField(sid, fname, path, current, fallbackPlaceholder);
+  }
+
+  // Render a weight input per type
+  const rows = typeKeys.map(typeKey => {
+    const weight = current[typeKey] ?? 0;
+    const label  = loaded[typeKey]?.name ? `${esc(typeKey)} <span class="muted small">(${esc(loaded[typeKey].name)})</span>` : esc(typeKey);
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+      <span style="min-width:110px;font-size:12px">${label}</span>
+      <input class="edit-input edit-input--num" style="width:70px" type="number" min="0" step="0.1"
+        value="${esc(weight)}" title="Weight % for ${esc(typeKey)}"
+        oninput="APP.igUpdateTypeWeight('${sid}','${escJs(fname)}','${escJs(path)}','${escJs(typeKey)}',+this.value)">
+      <span class="muted small">%</span>
+    </div>`;
+  }).join('');
+
+  return `<div style="margin-top:4px">${rows}</div>`;
+}
+
+/* ═══════════════════════════════════════════════════════
+   BONUSES — per-material-modifier / per-material / per-class
+   ═══════════════════════════════════════════════════════ */
+
+/**
+ * Renders a key→number multiplier map (damage-types / defense-types / fabled-attributes)
+ * inside a single bonus entry. Dropdown from loaded section when available.
+ */
+function igBonusTypeMap(sid, fname, path, current, loadedSection, label, icon) {
+  const cur = (current && typeof current === 'object') ? current : {};
+  const loaded = STATE.loaded?.[loadedSection];
+  const available = loaded ? Object.keys(loaded).filter(k => !k.startsWith('_')) : [];
+
+  const rows = Object.entries(cur).map(([id, val]) => `
+    <div style="display:flex;gap:5px;align-items:center;margin-bottom:2px">
+      <span style="min-width:110px;font-size:11px;color:#ccc">${esc(id)}</span>
+      <input class="edit-input edit-input--num" style="width:65px;font-size:11px" type="number" step="0.01"
+        value="${esc(val)}"
+        oninput="APP.igUpdateField('${sid}','${escJs(fname)}','${escJs(path+'.'+id)}',+this.value)">
+      <button style="padding:1px 4px;background:#3a1e1e;border:1px solid #8a3a3a;border-radius:3px;color:#ea8f8f;cursor:pointer;font-size:10px;line-height:1.2"
+        onclick="APP.igBonusRemoveKey('${sid}','${escJs(fname)}','${escJs(path)}','${escJs(id)}')">✕</button>
+    </div>`).join('');
+
+  const toAdd = available.filter(k => !Object.prototype.hasOwnProperty.call(cur, k));
+  const addEl = available.length
+    ? `<select class="edit-input" style="font-size:10px;padding:1px 4px;margin-top:3px"
+        onchange="if(this.value){APP.igBonusAddKey('${sid}','${escJs(fname)}','${escJs(path)}',this.value,1);this.value=''}">
+        <option value="">+ Add ${esc(label)}…</option>
+        ${toAdd.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
+      </select>`
+    : `<input class="edit-input" style="font-size:11px;width:130px;margin-top:3px" placeholder="+ id, press Enter"
+        onkeydown="if(event.key==='Enter'&&this.value.trim()){APP.igBonusAddKey('${sid}','${escJs(fname)}','${escJs(path)}',this.value.trim(),1);this.value=''}">`;
+
+  return `<div style="margin-bottom:8px">
+    <div style="font-size:11px;font-weight:600;color:#bbb;margin-bottom:4px">${icon} ${label}</div>
+    <div style="padding-left:6px">
+      ${rows || '<p class="muted small" style="margin:0 0 2px">None set.</p>'}
+      ${addEl}
+    </div>
+  </div>`;
+}
+
+/**
+ * Renders item-stats inside a bonus entry, split into the same 4 categories
+ * as the main STATS editor: General Stats, Damage Buffs %, Defense Buffs %, Penetration.
+ * Each category reads keys from the corresponding loaded section for its add-dropdown.
+ */
+function igBonusItemStats(sid, fname, path, current) {
+  const cur = (current && typeof current === 'object') ? current : {};
+
+  const cats = [
+    { label: 'General Stats',   sec: 'general',     color: '#6db', icon: '📊' },
+    { label: 'Damage Buffs %',  sec: 'dmgbuff',    color: '#e74', icon: '🔥' },
+    { label: 'Defense Buffs %', sec: 'defbuff',    color: '#48f', icon: '🛡' },
+    { label: 'Penetration',     sec: 'penetration', color: '#fa4', icon: '🎯' },
+  ];
+
+  const assignedKeys = new Set();
+
+  const catHtml = cats.map(cat => {
+    const loaded   = STATE.loaded?.[cat.sec];
+    const secKeys  = loaded ? Object.keys(loaded).filter(k => !k.startsWith('_')) : [];
+    secKeys.forEach(k => assignedKeys.add(k));
+
+    const curEntries = Object.entries(cur).filter(([k]) => secKeys.includes(k));
+
+    const rows = curEntries.map(([statId, val]) => `
+      <div style="display:flex;gap:5px;align-items:center;margin-bottom:2px">
+        <span style="min-width:130px;font-size:11px;color:#ccc">${esc(statId)}</span>
+        <input class="edit-input edit-input--num" style="width:65px;font-size:11px" type="number" step="0.01"
+          value="${esc(val)}"
+          oninput="APP.igUpdateField('${sid}','${escJs(fname)}','${escJs(path+'.'+statId)}',+this.value)">
+        <button style="padding:1px 4px;background:#3a1e1e;border:1px solid #8a3a3a;border-radius:3px;color:#ea8f8f;cursor:pointer;font-size:10px;line-height:1.2"
+          onclick="APP.igBonusRemoveKey('${sid}','${escJs(fname)}','${escJs(path)}','${escJs(statId)}')">✕</button>
+      </div>`).join('');
+
+    const toAdd = secKeys.filter(k => !Object.prototype.hasOwnProperty.call(cur, k));
+    const addEl = secKeys.length
+      ? `<select class="edit-input" style="font-size:10px;padding:1px 4px;margin-top:2px"
+          onchange="if(this.value){APP.igBonusAddKey('${sid}','${escJs(fname)}','${escJs(path)}',this.value,1);this.value=''}">
+          <option value="">+ Add ${esc(cat.label)}…</option>
+          ${toAdd.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('')}
+        </select>`
+      : `<p class="muted small" style="margin-top:2px">Load <b>${cat.sec}</b> section to add.</p>`;
+
+    return `<div style="margin-bottom:6px">
+      <div style="font-size:10px;font-weight:700;color:${cat.color};margin-bottom:3px">${cat.icon} ${cat.label}</div>
+      <div style="padding-left:6px">
+        ${rows || '<p class="muted small" style="margin:0 0 1px">None.</p>'}
+        ${addEl}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Stats not matched to any loaded section → show in "Other"
+  const unknownEntries = Object.entries(cur).filter(([k]) => !assignedKeys.has(k));
+  const unknownHtml = unknownEntries.length ? `<div style="margin-bottom:6px">
+    <div style="font-size:10px;font-weight:700;color:#888;margin-bottom:3px">❓ Other</div>
+    <div style="padding-left:6px">
+      ${unknownEntries.map(([statId, val]) => `
+        <div style="display:flex;gap:5px;align-items:center;margin-bottom:2px">
+          <span style="min-width:130px;font-size:11px;color:#aaa">${esc(statId)}</span>
+          <input class="edit-input edit-input--num" style="width:65px;font-size:11px" type="number" step="0.01"
+            value="${esc(val)}"
+            oninput="APP.igUpdateField('${sid}','${escJs(fname)}','${escJs(path+'.'+statId)}',+this.value)">
+          <button style="padding:1px 4px;background:#3a1e1e;border:1px solid #8a3a3a;border-radius:3px;color:#ea8f8f;cursor:pointer;font-size:10px;line-height:1.2"
+            onclick="APP.igBonusRemoveKey('${sid}','${escJs(fname)}','${escJs(path)}','${escJs(statId)}')">✕</button>
+        </div>`).join('')}
+    </div>
+  </div>` : '';
+
+  return `<div style="margin-bottom:8px">
+    <div style="font-size:11px;font-weight:600;color:#bbb;margin-bottom:4px">📊 Item Stats</div>
+    <div style="padding:4px 0 0 8px;border-left:2px solid #2a3a2a">
+      ${catHtml}${unknownHtml}
+    </div>
+  </div>`;
+}
+
+/**
+ * Renders a single named entry inside one of the 3 bonus categories.
+ * hasExtras = true for material-modifiers and material (adds fabled-attributes).
+ * Class entries only support damage-types, defense-types, item-stats.
+ */
+function igBonusEntry(sid, fname, bonusCat, key, data, hasExtras) {
+  data = (data && typeof data === 'object') ? data : {};
+  const bp = `generator.bonuses.${bonusCat}.${key}`;
+  return `<div style="border:1px solid #2a2a3a;border-radius:4px;margin-bottom:8px;padding:8px 10px;background:#18181e">
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+      <input class="edit-input edit-id" style="flex:1;min-width:100px;font-weight:600" value="${esc(key)}"
+        title="${hasExtras ? 'Material name or wildcard (e.g. diamond*, iron_sword)' : 'Class name'}"
+        onblur="if(this.value.trim()&&this.value.trim()!=='${escJs(key)}')APP.igBonusRenameEntry('${sid}','${escJs(fname)}','${escJs(bonusCat)}','${escJs(key)}',this.value.trim())"
+        onkeydown="if(event.key==='Enter')this.blur()">
+      <button style="padding:2px 7px;background:#3a1e1e;border:1px solid #8a3a3a;border-radius:3px;color:#ea8f8f;cursor:pointer;font-size:11px"
+        onclick="if(confirm('Remove bonus entry \\'${escJs(key)}\\'?'))APP.igBonusRemoveEntry('${sid}','${escJs(fname)}','${escJs(bonusCat)}','${escJs(key)}')">🗑 Remove</button>
+    </div>
+    ${igBonusTypeMap(sid, fname, `${bp}.damage-types`,  data['damage-types']  ?? {}, 'damage',         'Damage Types',      '⚔️')}
+    ${igBonusTypeMap(sid, fname, `${bp}.defense-types`, data['defense-types'] ?? {}, 'defense',        'Defense Types',     '🛡️')}
+    ${igBonusItemStats(sid, fname, `${bp}.item-stats`,  data['item-stats']    ?? {})}
+    ${hasExtras ? igBonusTypeMap(sid, fname, `${bp}.fabled-attributes`, data['fabled-attributes'] ?? {}, 'fabledAttributes', 'Fabled Attributes', '⭐') : ''}
+  </div>`;
+}
+
+/**
+ * Renders one of the 3 bonus sub-categories with its entries and an Add button.
+ */
+function igBonusCategory(sid, fname, bonusCat, entries, hasExtras) {
+  const meta = {
+    'material-modifiers': { icon: '🔮', title: 'Material Modifiers', hint: 'Wildcard or prefix material names — e.g. <code>diamond*</code>, <code>gold</code>.' },
+    'material':           { icon: '🧱', title: 'Material Bonuses',   hint: 'Exact material / item IDs — e.g. <code>iron_sword</code>, <code>iron_helmet</code>.' },
+    'class':              { icon: '🧙', title: 'Class Bonuses',       hint: 'Fabled class names — e.g. <code>Warrior</code>, <code>Cleric</code>. Supports: damage-types, defense-types, item-stats.' },
+  }[bonusCat] ?? { icon: '📦', title: bonusCat, hint: '' };
+
+  const entryHtml = Object.entries(entries).map(([k, v]) =>
+    igBonusEntry(sid, fname, bonusCat, k, v, hasExtras)
+  ).join('');
+
+  return `<div style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+      <span style="font-size:12px;font-weight:700;color:#ccc">${meta.icon} ${meta.title}</span>
+      <button class="btn-add-entry" style="font-size:11px;padding:2px 8px"
+        onclick="APP.igBonusAddEntry('${sid}','${escJs(fname)}','${escJs(bonusCat)}')">+ Add entry</button>
+    </div>
+    <p class="muted small" style="margin:0 0 7px">${meta.hint}</p>
+    ${entryHtml || '<p class="muted small">No entries defined.</p>'}
+  </div>`;
 }
 
 /**
@@ -1528,19 +1763,46 @@ function renderItemGenFile(sid, fname, data, family) {
         ${cardRow('Suffix chance %', igNum(sid, fname, 'generator.suffix-chance', gen['suffix-chance'] ?? 100))}
       `)}
 
-      ${igCollapsible('🧱 Materials & Bonuses', `
-        <p class="ig-subhead">Materials</p>
-        ${cardRow('Reverse priority', igCheck(sid, fname, 'generator.materials.reverse', mats.reverse === true))}
+      ${igCollapsible('🧱 Materials', `
+        ${cardRow('Reverse blacklist', igCheck(sid, fname, 'generator.materials.reverse', mats.reverse === true))}
         ${cardRow('Black-list (one item per line)', igLineArray(sid, fname, 'generator.materials.black-list', mats['black-list'] ?? []))}
-        ${cardRow('Model data (JSON)',
+        ${cardRow('Model data',
           `${igJson(sid, fname, 'generator.materials.model-data', mats['model-data'] ?? {})}
            <p class="muted small" style="margin-top:3px"><code>default</code>: list of model-data IDs used for generic materials. <code>special</code>: map of material → [IDs] for specific variants.</p>`)}
-
-        <p class="ig-subhead">Bonuses by Material</p>
-        <p class="muted small" style="margin:0 0 6px">Per-material stat multipliers. Values are objects with <code>damage-types</code>, <code>defense-types</code>, <code>item-stats</code> sub-keys.</p>
-        ${cardRow('Wildcard modifiers (e.g. diamond*)', igJson(sid, fname, 'generator.bonuses.material-modifiers', bonuses['material-modifiers'] ?? {}))}
-        ${cardRow('Exact material', igJson(sid, fname, 'generator.bonuses.material', bonuses.material ?? {}))}
       `)}
+
+      ${igCollapsible('🎁 Bonuses', `
+        ${igBonusCategory(sid, fname, 'material-modifiers', bonuses['material-modifiers'] ?? {}, true)}
+        ${igBonusCategory(sid, fname, 'material',           bonuses.material              ?? {}, true)}
+        ${igBonusCategory(sid, fname, 'class',              bonuses.class                 ?? {}, false)}
+      `)}
+
+      ${igCollapsible('📋 Requirements', (() => {
+        const reqByLvl = gen['user-requirements-by-level'] ?? {};
+        // Class hint from loaded classes section
+        const loadedClasses = STATE.loaded?.classes;
+        const classNames = [];
+        if (loadedClasses?._multiFile) {
+          Object.values(loadedClasses.files || {}).forEach(fd => {
+            Object.values(fd || {}).forEach(entry => {
+              if (entry?.name && !classNames.includes(entry.name)) classNames.push(entry.name);
+            });
+          });
+        }
+        const classHint = classNames.length
+          ? `<p class="muted small" style="margin-top:3px">Loaded classes: ${classNames.map(n => `<code>${esc(n)}</code>`).join(', ')}</p>`
+          : `<p class="muted small" style="margin-top:3px">Load class files in <b>Combat Config → Classes</b> to see class names.</p>`;
+        return `
+          ${cardRow('Level requirements',
+            `${igLineKvField(sid, fname, 'generator.user-requirements-by-level.level', reqByLvl.level ?? {}, 'level min:max')}
+             <p class="muted small" style="margin-top:3px">e.g. <code>1 1:10</code> — at level 1 the stat can roll 1–10.</p>`)}
+          ${cardRow('Allowed classes',
+            `${igLineKvField(sid, fname, 'generator.user-requirements-by-level.class', reqByLvl.class ?? {}, 'level ClassName1,ClassName2')}
+             ${classHint}`)}
+          ${cardRow('Banned classes',
+            `${igLineKvField(sid, fname, 'generator.user-requirements-by-level.banned-class', reqByLvl['banned-class'] ?? {}, 'level ClassName1,ClassName2')}
+             ${classHint}`)}`;
+      })())}
 
       ${igCollapsible('✨ Enchantments', `
         ${cardRow('Min / Max',
@@ -1558,11 +1820,11 @@ function renderItemGenFile(sid, fname, data, family) {
 
       ${igCollapsible('🏹 Ammo & Hand Types', `
         ${cardRow('Ammo types',
-          `${igLineKvField(sid, fname, 'generator.ammo-types', gen['ammo-types'] ?? {}, 'AMMO_TYPE weight%')}
-           <p class="muted small" style="margin-top:3px">e.g. <code>ARROW 100.0</code></p>`)}
+          `${igTypePicker(sid, fname, 'generator.ammo-types', gen['ammo-types'] ?? {}, 'ammo', 'AMMO_TYPE weight%')}
+           ${STATE.loaded?.ammo ? '' : '<p class="muted small" style="margin-top:3px">Load <b>ammo.yml</b> in Stats → Ammo Types for type picker. Fallback: one <code>TYPE weight%</code> per line.</p>'}`)}
         ${cardRow('Hand types',
-          `${igLineKvField(sid, fname, 'generator.hand-types', gen['hand-types'] ?? {}, 'ONE/TWO weight%')}
-           <p class="muted small" style="margin-top:3px">e.g. <code>ONE 70.0</code> / <code>TWO 30.0</code></p>`)}
+          `${igTypePicker(sid, fname, 'generator.hand-types', gen['hand-types'] ?? {}, 'hand', 'ONE/TWO weight%')}
+           ${STATE.loaded?.hand ? '' : '<p class="muted small" style="margin-top:3px">Load <b>hand.yml</b> in Stats → Hand Types for type picker. Fallback: one <code>TYPE weight%</code> per line.</p>'}`)}
       `)}
 
       ${buildStatGroup(sid, fname, 'generator.damage-types',      dmgTypes,   '🗡️ Damage Types',      'section:damage',                        'DAMAGE_')}
@@ -2737,31 +2999,23 @@ function renderFabledAttributes(data, sid) {
   const entries = Object.entries(data).filter(([, v]) => v && typeof v === 'object');
   if (!entries.length) return '<div class="empty-state">No attributes found.</div>';
 
+  // Data is pre-slimmed to { display, max, icon-lore } by SECTION_SLIM
   const cards = entries.map(([key, attr]) => {
-    const stats   = attr.stats ?? {};
     const loreHtml = (attr['icon-lore'] ?? []).map(l =>
       `<div class="lore-line">${mc.toHtml(String(l))}</div>`).join('');
-    const statsHtml = Object.entries(stats).map(([k, v]) =>
-      `<div class="info-row"><span class="info-label" style="font-size:11px;color:#8fa8cf">${esc(k)}</span>
-       <code style="font-size:11px;color:#8fea8f">${esc(String(v).trim())}</code></div>`
-    ).join('');
-
     return `
-      <div class="item-card" style="min-width:220px;max-width:320px">
+      <div class="item-card" style="min-width:180px;max-width:260px">
         <div class="item-card__header" style="cursor:default">
           <span class="item-card__icon">⭐</span>
           <strong>${esc(attr.display ?? key)}</strong>
           <span class="badge" style="margin-left:auto">max: ${esc(attr.max ?? '?')}</span>
         </div>
-        <div class="item-card__body">
-          ${loreHtml ? `<div class="lore-preview" style="margin-bottom:8px">${loreHtml}</div>` : ''}
-          ${statsHtml || '<p class="muted small">No stats.</p>'}
-        </div>
+        ${loreHtml ? `<div class="item-card__body"><div class="lore-preview">${loreHtml}</div></div>` : ''}
       </div>`;
   }).join('');
 
   return `
-    <p class="muted small" style="margin-bottom:12px">Read-only — load <code>attributes.yml</code> from your Fabled/SkillAPI plugin folder. Used by item gen to sync fabled attribute lore &amp; pool entries.</p>
+    <p class="muted small" style="margin-bottom:12px">Read-only — load <code>attributes.yml</code>. Item gen syncs fabled attribute lore &amp; pool entries from here.</p>
     <div class="cards-grid">${cards}</div>`;
 }
 
@@ -2823,47 +3077,110 @@ function renderSkills(data, sid) {
 function renderAmmo(data, sid) {
   if (!data || typeof data !== 'object') return '<div class="empty-state">No data.</div>';
   const entries = Object.entries(data).filter(([, v]) => v && typeof v === 'object');
-  if (!entries.length) return '<div class="empty-state">No ammo types found.</div>';
 
-  const rows = entries.map(([key, ammo]) => `
-    <tr>
-      <td><code>${esc(key)}</code></td>
-      <td>${mc.toHtml(String(ammo.name ?? ''))}</td>
-      <td>${mc.toHtml(String(ammo.format ?? ''))}</td>
-      <td><span class="badge ${ammo.enabled !== false ? 'badge-green' : 'badge-red'}">${ammo.enabled !== false ? 'on' : 'off'}</span></td>
-    </tr>`).join('');
+  const cards = entries.map(([key, ammo]) => `
+    <div class="item-card" style="min-width:260px;max-width:380px">
+      <div class="item-card__header" style="cursor:default">
+        <input class="edit-input edit-id" value="${esc(key)}" title="Rename key"
+          onblur="if(this.value.trim()&&this.value.trim()!=='${esc(key)}')APP.renameEntry('${sid}','${esc(key)}',this.value.trim())"
+          onkeydown="if(event.key==='Enter')this.blur()">
+        <span class="badge ${ammo.enabled !== false ? 'badge-green' : 'badge-red'}" style="flex-shrink:0">${ammo.enabled !== false ? 'on' : 'off'}</span>
+        <button class="btn-icon btn-del" onclick="if(confirm('Remove ${esc(key)}?'))APP.removeEntry('${sid}','${esc(key)}')">🗑</button>
+      </div>
+      <div class="item-card__body">
+        ${cardRow('Name',    editText(sid, `${key}.name`,    ammo.name    ?? ''))}
+        ${cardRow('Format',  editText(sid, `${key}.format`,  ammo.format  ?? ''))}
+        ${cardRow('Enabled', `<input class="edit-check" type="checkbox" ${ammo.enabled !== false ? 'checked' : ''}
+          onchange="APP.updateField('${sid}','${esc(key)}.enabled',this.checked)">`)}
+      </div>
+    </div>`).join('');
+
+  const addRow = `
+    <div style="display:flex;gap:6px;margin-top:10px;align-items:center;flex-wrap:wrap">
+      <input id="ammo-new-key" class="edit-input" placeholder="NEW_AMMO_KEY (e.g. SNOWBALL)" style="width:220px">
+      <button class="btn-add-entry"
+        onclick="APP.addRawEntry('${sid}',document.getElementById('ammo-new-key').value,{name:'',format:'',enabled:true});document.getElementById('ammo-new-key').value=''">+ Add ammo type</button>
+    </div>`;
 
   return `
-    <p class="muted small" style="margin-bottom:10px">Read-only — load <code>ammo.yml</code>. Keys are used in item gen ammo-types field.</p>
-    <table class="data-table" style="width:100%">
-      <thead><tr><th>Key</th><th>Name</th><th>Format preview</th><th>Enabled</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    <p class="muted small" style="margin-bottom:10px">Load <code>ammo.yml</code>. Keys used in item gen ammo-types weights.</p>
+    <div class="cards-grid">${cards || '<p class="muted small">No ammo types yet.</p>'}</div>
+    ${addRow}`;
 }
 
 // ---------------------------------------------------------------------------
-// Hand types (hand.yml) — read-only display
+// Hand types (hand.yml) — editable
 // ---------------------------------------------------------------------------
 
 function renderHand(data, sid) {
   if (!data || typeof data !== 'object') return '<div class="empty-state">No data.</div>';
   const entries = Object.entries(data).filter(([, v]) => v && typeof v === 'object');
-  if (!entries.length) return '<div class="empty-state">No hand types found.</div>';
 
-  const rows = entries.map(([key, hand]) => `
-    <tr>
-      <td><code>${esc(key)}</code></td>
-      <td>${mc.toHtml(String(hand.name ?? ''))}</td>
-      <td>${mc.toHtml(String(hand.format ?? ''))}</td>
-      <td><span class="badge ${hand.enabled !== false ? 'badge-green' : 'badge-red'}">${hand.enabled !== false ? 'on' : 'off'}</span></td>
-    </tr>`).join('');
+  const cards = entries.map(([key, hand]) => `
+    <div class="item-card" style="min-width:260px;max-width:380px">
+      <div class="item-card__header" style="cursor:default">
+        <input class="edit-input edit-id" value="${esc(key)}" title="Rename key"
+          onblur="if(this.value.trim()&&this.value.trim()!=='${esc(key)}')APP.renameEntry('${sid}','${esc(key)}',this.value.trim())"
+          onkeydown="if(event.key==='Enter')this.blur()">
+        <span class="badge ${hand.enabled !== false ? 'badge-green' : 'badge-red'}" style="flex-shrink:0">${hand.enabled !== false ? 'on' : 'off'}</span>
+        <button class="btn-icon btn-del" onclick="if(confirm('Remove ${esc(key)}?'))APP.removeEntry('${sid}','${esc(key)}')">🗑</button>
+      </div>
+      <div class="item-card__body">
+        ${cardRow('Name',    editText(sid, `${key}.name`,    hand.name    ?? ''))}
+        ${cardRow('Format',  editText(sid, `${key}.format`,  hand.format  ?? ''))}
+        ${cardRow('Enabled', `<input class="edit-check" type="checkbox" ${hand.enabled !== false ? 'checked' : ''}
+          onchange="APP.updateField('${sid}','${esc(key)}.enabled',this.checked)">`)}
+      </div>
+    </div>`).join('');
+
+  const addRow = `
+    <div style="display:flex;gap:6px;margin-top:10px;align-items:center;flex-wrap:wrap">
+      <input id="hand-new-key" class="edit-input" placeholder="NEW_HAND_KEY (e.g. TWO)" style="width:220px">
+      <button class="btn-add-entry"
+        onclick="APP.addRawEntry('${sid}',document.getElementById('hand-new-key').value,{name:'',format:'',enabled:true});document.getElementById('hand-new-key').value=''">+ Add hand type</button>
+    </div>`;
 
   return `
-    <p class="muted small" style="margin-bottom:10px">Read-only — load <code>hand.yml</code>. Keys are used in item gen hand-types field (ONE / TWO).</p>
-    <table class="data-table" style="width:100%">
-      <thead><tr><th>Key</th><th>Name</th><th>Format preview</th><th>Enabled</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    <p class="muted small" style="margin-bottom:10px">Load <code>hand.yml</code>. Keys used in item gen hand-types weights (ONE / TWO).</p>
+    <div class="cards-grid">${cards || '<p class="muted small">No hand types yet.</p>'}</div>
+    ${addRow}`;
+}
+
+// ---------------------------------------------------------------------------
+// Classes (classes/*.yml) — read-only multiFile display
+// ---------------------------------------------------------------------------
+
+function renderClasses(data, sid) {
+  if (!data) return '<div class="empty-state">No data.</div>';
+
+  const addBtn = `<button class="btn-add-entry"
+    onclick="document.getElementById('classes-file-add-${sid}').click()">📂 Load class files
+    <input id="classes-file-add-${sid}" type="file" accept=".yml,.yaml" multiple style="display:none"
+      onchange="APP.onIgAddInput(event,'${sid}')">
+  </button>`;
+
+  const toolbar = `
+    <div class="entry-actions" style="flex-wrap:wrap;gap:6px">
+      ${addBtn}
+      <span class="muted small" style="align-self:center">Drop class .yml files. Each file = one class (read-only).</span>
+    </div>`;
+
+  if (!data._multiFile) return `${toolbar}<div class="empty-state">Drop class YAML files above.</div>`;
+
+  const entries = Object.entries(data.files || {});
+  if (!entries.length) return `${toolbar}<div class="empty-state">No class files loaded yet.</div>`;
+
+  // Data is pre-slimmed to { ClassName: { name } }
+  const chips = entries.map(([fname, fileData]) => {
+    const entry = Object.values(fileData || {}).find(v => v && typeof v === 'object');
+    const name  = entry?.name ?? fname.replace(/\.ya?ml$/i, '');
+    return `<span style="display:inline-block;padding:4px 10px;background:#1e2a3a;border:1px solid #3a5a8a;border-radius:20px;color:#8fb8ea;font-size:13px;margin:3px">${esc(name)}</span>`;
+  }).join('');
+
+  return `
+    ${toolbar}
+    <div style="margin-top:12px;line-height:1.8">${chips}</div>
+    <p class="muted small" style="margin-top:10px">These class names appear in item gen → Requirements → Allowed/Banned classes.</p>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2889,4 +3206,5 @@ const RENDERERS = {
   renderSkills,
   renderAmmo,
   renderHand,
+  renderClasses,
 };
