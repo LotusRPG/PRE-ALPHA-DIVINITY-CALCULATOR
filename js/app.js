@@ -37,6 +37,22 @@
 /** Parsed YAML per section. */
 const STATE = { loaded: {}, errors: {} };
 
+/** Persistent search queries per section — survives re-renders. */
+const SECTION_SEARCH = {};
+
+/** Build preview state — persists across renders. */
+const BUILD_STATE = {
+  playerLevel: 1,
+  slots: {
+    weapon:  { fname: '', level: 1, gems: ['','',''], gemLevels: [1,1,1], essence: '', essenceLevel: 1, rune: '', runeLevel: 1 },
+    offhand: { fname: '', level: 1, gems: ['','',''], gemLevels: [1,1,1], essence: '', essenceLevel: 1, rune: '', runeLevel: 1 },
+    helmet:  { fname: '', level: 1, gems: ['','',''], gemLevels: [1,1,1], essence: '', essenceLevel: 1, rune: '', runeLevel: 1 },
+    chest:   { fname: '', level: 1, gems: ['','',''], gemLevels: [1,1,1], essence: '', essenceLevel: 1, rune: '', runeLevel: 1 },
+    legs:    { fname: '', level: 1, gems: ['','',''], gemLevels: [1,1,1], essence: '', essenceLevel: 1, rune: '', runeLevel: 1 },
+    boots:   { fname: '', level: 1, gems: ['','',''], gemLevels: [1,1,1], essence: '', essenceLevel: 1, rune: '', runeLevel: 1 },
+  },
+};
+
 /**
  * Keys added during the last sync operation (per section).
  * Used by renderers to show a "new" badge on freshly synced entries.
@@ -111,6 +127,13 @@ function renderSection(sectionId) {
   if (sectionId === 'load')     { content.innerHTML = buildLoadSection();     refreshAutoSaveStatus(); return; }
   if (sectionId === 'settings') { content.innerHTML = buildSettingsSection(); refreshAutoSaveStatus(); return; }
 
+  // Save open/closed state of all keyed <details> before wiping the DOM
+  const detailsOpen   = new Set();
+  const detailsClosed = new Set();
+  content.querySelectorAll('details[data-key]').forEach(el => {
+    (el.open ? detailsOpen : detailsClosed).add(el.dataset.key);
+  });
+
   const def = SCHEMA.sections[sectionId];
   if (!def) {
     content.innerHTML = `<div class="alert alert-error">Unknown section: ${sectionId}</div>`;
@@ -124,17 +147,18 @@ function renderSection(sectionId) {
     </div>`;
 
   if (STATE.loaded[sectionId] && def.file) {
-    const fname = def.file.split('/').pop();
+    const isMulti = !!def.multiFile;
+    const dlBtn   = isMulti
+      ? `<button class="btn-download" onclick="APP.igDownloadAll('${sectionId}')">⬇ Download all (ZIP)</button>`
+      : `<button class="btn-download" onclick="APP.download('${sectionId}')">⬇ Download <code>${def.file.split('/').pop()}</code></button>`;
     html += `
       <div class="section-toolbar">
         <span class="toolbar-hint">✏️ Edit fields directly. Changes are in memory until downloaded.</span>
-        <button class="btn-download" onclick="APP.download('${sectionId}')">
-          ⬇ Download <code>${fname}</code>
-        </button>
+        ${dlBtn}
       </div>`;
   }
 
-  if (!STATE.loaded[sectionId]) {
+  if (!STATE.loaded[sectionId] && def.file) {
     const err = STATE.errors[sectionId];
     html += err
       ? `<div class="alert alert-error">❌ Load error: ${err}
@@ -168,6 +192,45 @@ function renderSection(sectionId) {
   }
 
   content.innerHTML = html;
+
+  // Inject search box for searchable sections
+  if (def.searchable && STATE.loaded[sectionId]) {
+    const toolbar = content.querySelector('.section-toolbar');
+    if (toolbar) {
+      const q = SECTION_SEARCH[sectionId] ?? '';
+      const searchEl = document.createElement('div');
+      searchEl.style.cssText = 'margin-left:auto;display:flex;align-items:center;gap:6px';
+      searchEl.innerHTML = `<input id="section-search-${sectionId}" type="search" placeholder="🔍 Search…"
+        value="${q.replace(/"/g, '&quot;')}"
+        style="padding:4px 8px;border-radius:4px;border:1px solid #444;background:#1a1a1a;color:#ddd;font-size:13px;width:180px"
+        oninput="APP.filterSection('${sectionId}',this.value)">`;
+      toolbar.appendChild(searchEl);
+      if (q) applyCardFilter(content, q);
+    }
+  }
+
+  // Restore open/closed state: override defaults only for elements seen before this render
+  if (detailsOpen.size || detailsClosed.size) {
+    content.querySelectorAll('details[data-key]').forEach(el => {
+      const key = el.dataset.key;
+      if (detailsOpen.has(key))        el.open = true;
+      else if (detailsClosed.has(key)) el.open = false;
+      // New elements (not seen before) keep their default from the rendered HTML
+    });
+  }
+}
+
+/** Filter .item-card elements by text content match (case-insensitive). */
+function applyCardFilter(root, query) {
+  const q = query.trim().toLowerCase();
+  root.querySelectorAll('.item-card').forEach(card => {
+    if (!q) {
+      card.style.display = '';
+    } else {
+      const text = card.textContent.toLowerCase();
+      card.style.display = text.includes(q) ? '' : 'none';
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -303,8 +366,19 @@ function afterLoad(sid) {
     // Silently refresh zone status indicator
     const statusEl = document.querySelector(`#zone-${sid} .file-drop-zone__status`);
     if (statusEl) {
-      statusEl.textContent = STATE.loaded[sid] ? '✅ Loaded' : '❌ Error';
-      statusEl.className   = `file-drop-zone__status ${STATE.loaded[sid] ? 'loaded' : 'error'}`;
+      const raw = STATE.loaded[sid];
+      const def = SCHEMA.sections[sid];
+      let text = '', cls = '';
+      if (raw && def?.multiFile) {
+        const n = Object.keys(raw.files || {}).length;
+        text = `✅ ${n} file(s)`; cls = 'loaded';
+      } else if (raw) {
+        text = '✅ Loaded'; cls = 'loaded';
+      } else if (STATE.errors[sid]) {
+        text = '❌ Error';  cls = 'error';
+      }
+      statusEl.textContent = text;
+      statusEl.className   = `file-drop-zone__status ${cls}`;
     }
   }
 }
@@ -322,6 +396,13 @@ const APP = {
     updateActiveNav(sid);
     renderSection(sid);
     document.getElementById('content').scrollTop = 0;
+  },
+
+  // ---- Section card search ----
+
+  filterSection(sectionId, query) {
+    SECTION_SEARCH[sectionId] = query;
+    applyCardFilter(document.getElementById('content'), query);
   },
 
   // ---- Table search ----
@@ -536,6 +617,12 @@ const APP = {
     } catch (_) { /* invalid JSON — ignore, user is still editing */ }
   },
 
+  /** Line-by-line textarea → string array. Empty lines are filtered out. */
+  updateLineArray(sid, path, text) {
+    const arr = text.split('\n').map(s => s.trim()).filter(Boolean);
+    setPath(STATE.loaded[sid], path, arr);
+  },
+
   // ---- Entry management (top-level keys) ----
 
   /**
@@ -544,8 +631,14 @@ const APP = {
    * For defense types: also auto-creates matching defbuff entry.
    */
   addEntry(sid, key, template) {
+    if (!STATE.loaded[sid]) {
+      // Auto-initialize with empty object so Add button works without loading a file
+      const def = SCHEMA.sections[sid];
+      if (!def || def.multiFile) return;
+      STATE.loaded[sid] = {};
+      delete STATE.errors[sid];
+    }
     const data = STATE.loaded[sid];
-    if (!data) return;
 
     // Ensure unique key
     let uniqueKey = key;
@@ -587,6 +680,63 @@ const APP = {
     renderSection(sid);
   },
 
+  // ---- Build Preview ----
+
+  buildSetSlot(slot, fname) {
+    if (!BUILD_STATE.slots[slot]) return;
+    BUILD_STATE.slots[slot].fname = fname;
+    if (_activeSection === 'build') renderSection('build');
+  },
+
+  buildSetLevel(slot, level) {
+    if (!BUILD_STATE.slots[slot]) return;
+    BUILD_STATE.slots[slot].level = Math.max(1, +level || 1);
+    if (_activeSection === 'build') renderSection('build');
+  },
+
+  buildSetGem(slot, idx, fname) {
+    if (!BUILD_STATE.slots[slot]) return;
+    BUILD_STATE.slots[slot].gems[idx] = fname;
+    if (_activeSection === 'build') renderSection('build');
+  },
+
+  buildSetGemLevel(slot, idx, level) {
+    if (!BUILD_STATE.slots[slot]) return;
+    BUILD_STATE.slots[slot].gemLevels[idx] = Math.max(1, +level || 1);
+    if (_activeSection === 'build') renderSection('build');
+  },
+
+  buildSetEssence(slot, fname) {
+    if (!BUILD_STATE.slots[slot]) return;
+    BUILD_STATE.slots[slot].essence = fname;
+    if (_activeSection === 'build') renderSection('build');
+  },
+
+  buildSetEssenceLevel(slot, level) {
+    if (!BUILD_STATE.slots[slot]) return;
+    BUILD_STATE.slots[slot].essenceLevel = Math.max(1, +level || 1);
+    if (_activeSection === 'build') renderSection('build');
+  },
+
+  buildSetRune(slot, fname) {
+    if (!BUILD_STATE.slots[slot]) return;
+    BUILD_STATE.slots[slot].rune = fname;
+    if (_activeSection === 'build') renderSection('build');
+  },
+
+  buildSetRuneLevel(slot, level) {
+    if (!BUILD_STATE.slots[slot]) return;
+    BUILD_STATE.slots[slot].runeLevel = Math.max(1, +level || 1);
+    if (_activeSection === 'build') renderSection('build');
+  },
+
+  buildSetPlayerLevel(level) {
+    BUILD_STATE.playerLevel = Math.max(1, +level || 1);
+    if (_activeSection === 'build') renderSection('build');
+  },
+
+  // ---- Entries ----
+
   removeEntry(sid, key) {
     const data = STATE.loaded[sid];
     if (!data) return;
@@ -624,7 +774,7 @@ const APP = {
     const def  = SCHEMA.sections[sid];
     if (!data || !def?.file) return;
     if (def.multiFile && data._multiFile) {
-      Object.keys(data.files || {}).forEach(fname => this.igDownload(sid, fname));
+      this.igDownloadAll(sid);
       return;
     }
     const blob = new Blob([YAML.stringify(data)], { type: 'text/yaml;charset=utf-8' });
@@ -690,6 +840,163 @@ const APP = {
     try { setPath(files[fname], path, JSON.parse(jsonText)); } catch (_) {}
   },
 
+  igToggleFlag(sid, fname, flag) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const file  = files[fname];
+    let flags = getPath(file, 'item-flags');
+    if (!Array.isArray(flags)) flags = [];
+    const idx = flags.indexOf(flag);
+    if (idx === -1) flags.push(flag);
+    else            flags.splice(idx, 1);
+    setPath(file, 'item-flags', flags);
+    renderSection(_activeSection);
+  },
+
+  /** Line-by-line textarea → string array for item-gen files. */
+  igUpdateLineArray(sid, fname, path, text) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const arr = text.split('\n').map(s => s.trim()).filter(Boolean);
+    setPath(files[fname], path, arr);
+  },
+
+  /** Line-by-line "key value" textarea → object for item-gen files. */
+  igUpdateLineKv(sid, fname, path, text) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const obj = {};
+    text.split('\n').map(l => l.trim()).filter(Boolean).forEach(line => {
+      const idx = line.indexOf(' ');
+      if (idx === -1) obj[line] = '';
+      else obj[line.slice(0, idx)] = line.slice(idx + 1).trim();
+    });
+    setPath(files[fname], path, obj);
+  },
+
+  /** Add a new blank skill entry to generator.skills.list (or any skills path). */
+  igAddSkill(sid, fname, basePath) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const file    = files[fname];
+    const listPath = `${basePath}.list`;
+    let list = getPath(file, listPath);
+    if (!list || typeof list !== 'object') { setPath(file, listPath, {}); list = getPath(file, listPath); }
+    const key = 'new-skill-' + Date.now();
+    list[key] = { chance: 0, 'min-level': 1, 'max-level': 1, 'lore-format': [] };
+    renderSection(_activeSection);
+  },
+
+  /** Remove a skill entry from skills.list. */
+  igRemoveSkill(sid, fname, listPath, key) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const list = getPath(files[fname], listPath);
+    if (list && Object.prototype.hasOwnProperty.call(list, key)) {
+      delete list[key];
+      renderSection(_activeSection);
+    }
+  },
+
+  /** Rename a skill key inside skills.list. */
+  igRenameSkill(sid, fname, listPath, oldKey, newKey) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname] || !newKey || newKey === oldKey) return;
+    const list = getPath(files[fname], listPath);
+    if (!list || !Object.prototype.hasOwnProperty.call(list, oldKey)) return;
+    const val = list[oldKey];
+    const reordered = {};
+    Object.entries(list).forEach(([k, v]) => { reordered[k === oldKey ? newKey : k] = v; });
+    setPath(files[fname], listPath, reordered);
+    renderSection(_activeSection);
+  },
+
+  // Drag state — readable by renderers.js for the ondragover inline check
+  _igDragging: null,
+
+  igToggleCollapse(sid, fname) {
+    const d = STATE.loaded[sid];
+    if (!d) return;
+    if (!d._collapsed) d._collapsed = {};
+    d._collapsed[fname] = !d._collapsed[fname];
+    renderSection(_activeSection);
+  },
+
+  igCollapseAll(sid) {
+    const d = STATE.loaded[sid];
+    if (!d?._multiFile) return;
+    d._collapsed = {};
+    Object.keys(d.files || {}).forEach(fn => { d._collapsed[fn] = true; });
+    renderSection(_activeSection);
+  },
+
+  igExpandAll(sid) {
+    const d = STATE.loaded[sid];
+    if (!d) return;
+    d._collapsed = {};
+    renderSection(_activeSection);
+  },
+
+  igDragStart(sid, fname, event) {
+    // Only allow drag when the grab handle (⠿) is clicked — nothing else on the card should drag
+    if (!event.target.closest('.ig-drag-handle')) {
+      event.preventDefault();
+      return;
+    }
+    this._igDragging = { sid, fname };
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', fname);
+    // Let the browser show the default drag ghost; dim the card slightly
+    setTimeout(() => {
+      event.target.style.opacity = '0.5';
+    }, 0);
+    event.target.addEventListener('dragend', () => {
+      event.target.style.opacity = '';
+      this._igDragging = null;
+    }, { once: true });
+  },
+
+  igDrop(sid, family, event) {
+    event.preventDefault();
+    document.querySelectorAll('.ig-folder-group').forEach(el => el.classList.remove('drag-over'));
+    if (!this._igDragging || this._igDragging.sid !== sid) return;
+    const fname = this._igDragging.fname;
+    this._igDragging = null;
+    clearTimeout(this._igFamilyTimer); // cancel any pending debounced rename
+    const d = STATE.loaded[sid];
+    if (!d?._multiFile) return;
+    if (!d._families) d._families = {};
+    if (family) {
+      d._families[fname] = family;
+    } else {
+      delete d._families[fname];
+    }
+    renderSection(_activeSection);
+  },
+
+  igAddGroup(sid) {
+    const name = prompt('New folder name:');
+    if (!name || !name.trim()) return;
+    const folderName = name.trim();
+    const d = STATE.loaded[sid];
+    if (!d?._multiFile) return;
+    if (!d._emptyGroups) d._emptyGroups = [];
+    const existing = new Set([
+      ...Object.values(d._families || {}),
+      ...d._emptyGroups,
+    ]);
+    if (existing.has(folderName)) return;
+    d._emptyGroups.push(folderName);
+    renderSection(_activeSection);
+  },
+
+  igRemoveGroup(sid, family) {
+    const d = STATE.loaded[sid];
+    if (!d?._multiFile) return;
+    if (d._emptyGroups) d._emptyGroups = d._emptyGroups.filter(g => g !== family);
+    renderSection(_activeSection);
+  },
+
   igSetFamily(sid, fname, family) {
     const d = STATE.loaded[sid];
     if (!d?._multiFile) return;
@@ -710,23 +1017,313 @@ const APP = {
   igDownload(sid, fname) {
     const d = STATE.loaded[sid];
     if (!d?.files?.[fname]) return;
-    const family = d._families?.[fname] ?? '';
-    // Browsers don't support subdirs in download attr, so prefix filename for clarity
-    const downloadName = family ? `${family}__${fname}` : fname;
     const blob = new Blob([YAML.stringify(d.files[fname])], { type: 'text/yaml;charset=utf-8' });
     const url  = URL.createObjectURL(blob);
-    const a    = Object.assign(document.createElement('a'), { href: url, download: downloadName });
+    const a    = Object.assign(document.createElement('a'), { href: url, download: fname });
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  },
+
+  /** Download one folder group: real subfolder via File System Access API, or ZIP fallback. */
+  async igDownloadGroup(sid, family) {
+    const d = STATE.loaded[sid];
+    if (!d?._multiFile) return;
+    const families = d._families || {};
+    const files = Object.entries(d.files || {}).filter(([fn]) => (families[fn] ?? '') === family);
+    if (!files.length) return;
+
+    if (typeof window.showDirectoryPicker === 'function') {
+      try {
+        const rootHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        const targetDir  = family
+          ? await rootHandle.getDirectoryHandle(family, { create: true })
+          : rootHandle;
+        for (const [fname, fdata] of files) {
+          const fh = await targetDir.getFileHandle(fname, { create: true });
+          const wr = await fh.createWritable();
+          await wr.write(YAML.stringify(fdata));
+          await wr.close();
+        }
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        // fall through to ZIP
+      }
+    }
+
+    const z = new ZipBuilder();
+    for (const [fname, fdata] of files) {
+      z.add(family ? `${family}/${fname}` : fname, YAML.stringify(fdata));
+    }
+    const blob = z.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), {
+      href: url, download: family ? `${family}.zip` : 'items.zip',
+    });
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
+
+  /** Download all files across all groups: full folder tree via File System Access API, or one ZIP. */
+  async igDownloadAll(sid) {
+    const d = STATE.loaded[sid];
+    if (!d?._multiFile) return;
+    const files = Object.entries(d.files || {});
+    if (!files.length) return;
+    const families = d._families || {};
+
+    if (typeof window.showDirectoryPicker === 'function') {
+      try {
+        const rootHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        const dirCache   = {};
+        for (const [fname, fdata] of files) {
+          const family = families[fname] ?? '';
+          let targetDir;
+          if (family) {
+            if (!dirCache[family]) dirCache[family] = await rootHandle.getDirectoryHandle(family, { create: true });
+            targetDir = dirCache[family];
+          } else {
+            targetDir = rootHandle;
+          }
+          const fh = await targetDir.getFileHandle(fname, { create: true });
+          const wr = await fh.createWritable();
+          await wr.write(YAML.stringify(fdata));
+          await wr.close();
+        }
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        // fall through to ZIP
+      }
+    }
+
+    const z = new ZipBuilder();
+    for (const [fname, fdata] of files) {
+      const family = families[fname] ?? '';
+      z.add(family ? `${family}/${fname}` : fname, YAML.stringify(fdata));
+    }
+    const blob = z.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), {
+      href: url, download: `${sid}-items.zip`,
+    });
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
+
+  /**
+   * Resolve stat IDs from a source spec.
+   * "section:<sid>"  — top-level loaded section (damage, defense, penetration, dmgbuff, defbuff)
+   * "local:<path>"   — sub-object inside the given multiFile entry
+   */
+  _igResolveIds(source, sid, fname) {
+    if (source.startsWith('section:')) {
+      const secData = STATE.loaded[source.slice(8)];
+      if (!secData || typeof secData !== 'object') return [];
+      // multiFile section (e.g. skills): extract names from loaded files
+      if (secData._multiFile) {
+        const names = [];
+        Object.values(secData.files || {}).forEach(fileData => {
+          if (!fileData || typeof fileData !== 'object') return;
+          const entry = Object.values(fileData).find(v => v && typeof v === 'object');
+          if (entry?.name) names.push(entry.name);
+          else {
+            // fallback: use top-level key
+            const key = Object.keys(fileData)[0];
+            if (key) names.push(key);
+          }
+        });
+        return names;
+      }
+      return Object.entries(secData)
+        .filter(([, v]) => v && typeof v === 'object')
+        .map(([k]) => k);
+    } else if (source.startsWith('local:')) {
+      const fileData  = STATE.loaded[sid]?.files?.[fname];
+      const container = fileData ? getPath(fileData, source.slice(6)) : null;
+      if (container && typeof container === 'object') {
+        return Object.keys(container).filter(k => k !== 'lore-format');
+      }
+    }
+    return [];
+  },
+
+  /**
+   * Sync BOTH lore-format AND the stat pool from a loaded STATS section.
+   *
+   * loreFormatPath : dot-path to the lore-format array in the file
+   * poolPath       : dot-path to the pool object (where stat entries live)
+   * source         : "section:<sid>" | "local:<path>"
+   * prefix         : placeholder prefix, e.g. "DAMAGE_", "ITEM_STAT_"
+   *
+   * Pool entries added with defaults: { chance:0, scale-by-level:1.0, min:0, max:0, flat-range:false, round:false }
+   */
+  igSync(sid, fname, loreFormatPath, poolPath, source, prefix) {
+    const ids = this._igResolveIds(source, sid, fname);
+    if (!ids.length) {
+      alert('No entries found. Load the relevant stats section first (Damage, Defense, Penetration, etc.).');
+      return;
+    }
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const file = files[fname];
+
+    // 1. Sync lore-format
+    const format = ids.map(id => `%${prefix}${id.toUpperCase().replace(/-/g, '_')}%`);
+    setPath(file, loreFormatPath, format);
+
+    // 2. Sync pool — ensure every ID has an entry (don't overwrite existing ones)
+    const STAT_DEFAULT = { chance: 0, 'scale-by-level': 1.0, min: 0, max: 0, 'flat-range': false, round: false };
+    let pool = getPath(file, poolPath);
+    if (!pool || typeof pool !== 'object') {
+      setPath(file, poolPath, {});
+      pool = getPath(file, poolPath);
+    }
+    ids.forEach(id => {
+      if (!Object.prototype.hasOwnProperty.call(pool, id)) {
+        pool[id] = JSON.parse(JSON.stringify(STAT_DEFAULT));
+      }
+    });
+
+    renderSection(_activeSection);
+  },
+
+  /** @deprecated use igSync instead */
+  igSyncLoreFormat(sid, fname, path, source, prefix) {
+    this.igSync(sid, fname, path, path.replace(/\.lore-format$/, '.list'), source, prefix);
+  },
+
+  /**
+   * Sync socket lore-format AND pool for a single socket type (GEM / ESSENCE / RUNE).
+   *
+   * Reads unique `tier` values from all loaded files in `modSid` (gems / essences / runes).
+   * - lore-format  → ['%SOCKET_GEM_COMMON%', '%SOCKET_GEM_RARE%', ...]
+   * - pool entries → { common: { chance: 0 }, rare: { chance: 0 }, ... }
+   *   (existing entries are not overwritten)
+   */
+  igSyncSocket(sid, fname, type, modSid) {
+    const modData = STATE.loaded[modSid];
+    if (!modData?._multiFile || !modData.files) {
+      alert(`Load the ${modSid} section first so tier values can be read.`);
+      return;
+    }
+
+    // Collect unique tier values from all files in the module
+    const tiers = [...new Set(
+      Object.values(modData.files)
+        .map(f => f?.tier)
+        .filter(Boolean)
+        .map(String)
+    )];
+
+    if (!tiers.length) {
+      alert(`No tier values found in loaded ${modSid} files.`);
+      return;
+    }
+
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const file = files[fname];
+
+    const loreFormatPath = `generator.sockets.${type}.lore-format`;
+    const poolPath       = `generator.sockets.${type}.list`;
+
+    // 1. Sync lore-format
+    const format = tiers.map(t => `%SOCKET_${type}_${t.toUpperCase().replace(/-/g, '_')}%`);
+    setPath(file, loreFormatPath, format);
+
+    // 2. Sync pool — add missing tiers with { chance: 0 }
+    let pool = getPath(file, poolPath);
+    if (!pool || typeof pool !== 'object') {
+      setPath(file, poolPath, {});
+      pool = getPath(file, poolPath);
+    }
+    tiers.forEach(t => {
+      if (!Object.prototype.hasOwnProperty.call(pool, t)) {
+        pool[t] = { chance: 0 };
+      }
+    });
+
+    renderSection(_activeSection);
   },
 
   igRemoveFile(sid, fname) {
     const d = STATE.loaded[sid];
     if (!d?._multiFile) return;
     delete d.files[fname];
-    if (d._families) delete d._families[fname];
+    if (d._families)  delete d._families[fname];
+    if (d._collapsed) delete d._collapsed[fname];
     updateBadge(sid);
     renderSection(_activeSection);
+  },
+
+  /** Create a new file entry in a multiFile section, optionally from a template. */
+  igAddNewFile(sid, fname, tplKey) {
+    if (!fname || !fname.trim()) return;
+    const name = /\.ya?ml$/i.test(fname.trim()) ? fname.trim() : fname.trim() + '.yml';
+    const d = STATE.loaded[sid];
+    if (!d?._multiFile) return;
+    if (d.files[name]) { alert(`"${name}" already exists.`); return; }
+    const tpl = (window.ITEM_TEMPLATES?.[sid]?.[tplKey]) ?? {};
+    d.files[name] = JSON.parse(JSON.stringify(tpl));
+    updateBadge(sid);
+    renderSection(_activeSection);
+  },
+
+  /** Add a key to a nested object at containerPath inside a multiFile entry. */
+  igAddToPath(sid, fname, containerPath, key, defaultValue) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    let container = getPath(files[fname], containerPath);
+    if (!container || typeof container !== 'object') {
+      setPath(files[fname], containerPath, {});
+      container = getPath(files[fname], containerPath);
+    }
+    const k = String(key).trim();
+    if (!k) return;
+    if (Object.prototype.hasOwnProperty.call(container, k)) { alert(`"${k}" already exists.`); return; }
+    container[k] = defaultValue;
+    renderSection(_activeSection);
+  },
+
+  /** Remove a key from a nested object at containerPath inside a multiFile entry. */
+  igRemoveFromPath(sid, fname, containerPath, key) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const container = getPath(files[fname], containerPath);
+    if (container && typeof container === 'object') {
+      delete container[String(key)];
+      renderSection(_activeSection);
+    }
+  },
+
+  /** Add a new element to a Set file's `elements` map. */
+  igAddSetElement(sid, fname, inputId) {
+    const input  = document.getElementById(inputId);
+    const elemId = input?.value?.trim();
+    if (!elemId) return;
+    this.igAddToPath(sid, fname, 'elements', elemId, { materials: [], name: '' });
+    if (input) input.value = '';
+  },
+
+  /** Add a new bonus tier to a Set file's `bonuses.by-elements-amount` map. */
+  igAddBonusTier(sid, fname, inputId) {
+    const input = document.getElementById(inputId);
+    const cnt   = String(input?.value ?? '2').trim();
+    if (!cnt) return;
+    this.igAddToPath(sid, fname, 'bonuses.by-elements-amount', cnt, {
+      lore: [], 'item-stats': {}, 'damage-types': {}, 'defense-types': {}, 'potion-effects': {},
+    });
+  },
+
+  /** Add a new level to a Gem file's `bonuses-by-level` map. */
+  igAddGemLevel(sid, fname, inputId) {
+    const input = document.getElementById(inputId);
+    const lvl   = String(input?.value ?? '1').trim();
+    if (!lvl) return;
+    this.igAddToPath(sid, fname, 'bonuses-by-level', lvl, {
+      'item-stats': {}, 'damage-types': {}, 'defense-types': {}, skills: {},
+    });
   },
 
   async onIgAddInput(event, sid) {
@@ -735,6 +1332,7 @@ const APP = {
     updateBadge(sid);
     renderSection(_activeSection);
   },
+
 };
 
 // ---------------------------------------------------------------------------
