@@ -135,10 +135,21 @@ function addEntryBtn(sid, template, label) {
 }
 
 function collapseAllBtn() {
-  return `<button class="btn-add-entry"
-    onclick="document.querySelectorAll('#content .card-details').forEach(d=>d.open=false)">▶ Collapse all</button>
-    <button class="btn-add-entry"
-    onclick="document.querySelectorAll('#content .card-details').forEach(d=>d.open=true)">▼ Expand all</button>`;
+  return `<button class="btn-add-entry" onclick="APP.collapseAll()">▶ Collapse all</button>
+    <button class="btn-add-entry" onclick="APP.expandAll()">▼ Expand all</button>`;
+}
+
+/**
+ * Template <select> with persistent last-selection per section.
+ * options: array of {value, label} — first entry is implicitly {value:'', label:'Empty'}.
+ */
+function igTplSelect(sid, options) {
+  const last = window.IG_LAST_TEMPLATE?.[sid] ?? '';
+  const opts = [{ value: '', label: 'Empty' }, ...options]
+    .map(o => `<option value="${esc(o.value)}"${o.value === last ? ' selected' : ''}>${esc(o.label)}</option>`)
+    .join('');
+  return `<select id="ig-tpl-${sid}" class="edit-input ig-tpl-select"
+    onchange="APP.igSetLastTemplate('${sid}',this.value)">${opts}</select>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,12 +164,13 @@ const ITEM_TEMPLATES = {
     common: {
       name: '%BASE_NAME% %prefix_tier% %prefix_material% %prefix_type% %item_type% %suffix_material% %suffix_type% %suffix_tier%',
       lore: [
-        '%BASE_LORE%', '&7Tier: %TIER_NAME%', '&7Level: &f%ITEM_LEVEL%',
+        '%%BASE_LORE%%',
         '%ITEM_AMMO%', '%ITEM_HAND%', '%ENCHANTS%', '',
         '%USER_CLASS%', '%USER_BANNED_CLASS%', '%USER_LEVEL%', '',
         '%ITEM_SET%', '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
         '', '%GENERATOR_SKILLS%',
         '%GENERATOR_DEFENSE%', '%GENERATOR_DAMAGE%',
+        '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
         '%GENERATOR_STATS%', '%GENERATOR_FABLED_ATTR%',
         '%GENERATOR_SOCKETS_GEM%', '%GENERATOR_SOCKETS_ESSENCE%', '%GENERATOR_SOCKETS_RUNE%',
       ],
@@ -425,13 +437,23 @@ const ITEM_TEMPLATES = {
 
     weapon: {
       name: '%BASE_NAME% %prefix_tier% %item_type%',
-      lore: ['%BASE_LORE%', '&7Tier: %TIER_NAME%', '&7Level: &f%ITEM_LEVEL%', '', '%GENERATOR_DAMAGE%', '%GENERATOR_STATS%', '%GENERATOR_SOCKETS_GEM%', '%GENERATOR_SOCKETS_ESSENCE%', '%GENERATOR_SOCKETS_RUNE%'],
+       lore: [
+        '%%BASE_LORE%%',
+        '%ITEM_AMMO%', '%ITEM_HAND%', '%ENCHANTS%', '',
+        '%USER_CLASS%', '%USER_BANNED_CLASS%', '%USER_LEVEL%', '',
+        '%ITEM_SET%', '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
+        '', '%GENERATOR_SKILLS%',
+        '%GENERATOR_DEFENSE%', '%GENERATOR_DAMAGE%',
+        '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
+        '%GENERATOR_STATS%', '%GENERATOR_FABLED_ATTR%',
+        '%GENERATOR_SOCKETS_GEM%', '%GENERATOR_SOCKETS_ESSENCE%', '%GENERATOR_SOCKETS_RUNE%',
+      ],
       tier: 'common', unbreakable: false, 'item-flags': ['*'], color: '-1,-1,-1',
       level: { min: 1, max: 50 },
       generator: {
         'prefix-chance': 80.0, 'suffix-chance': 0.0,
         materials: { reverse: false, 'black-list': [] },
-        enchantments: { minimum: 1, maximum: 2, 'safe-only': true, list: {} },
+        enchantments: { minimum: 1, maximum: 2, 'safe-only': false, list: {} },
         'damage-types': {
           minimum: 1, maximum: 1,
           'lore-format': ['%DAMAGE_PHYSICAL%'],
@@ -452,13 +474,23 @@ const ITEM_TEMPLATES = {
 
     armor: {
       name: '%BASE_NAME% %prefix_tier% %item_type%',
-      lore: ['%BASE_LORE%', '&7Tier: %TIER_NAME%', '&7Level: &f%ITEM_LEVEL%', '', '%GENERATOR_DEFENSE%', '%GENERATOR_STATS%', '%GENERATOR_SOCKETS_GEM%', '%GENERATOR_SOCKETS_ESSENCE%', '%GENERATOR_SOCKETS_RUNE%'],
+       lore: [
+        '%%BASE_LORE%%',
+        '%ITEM_AMMO%', '%ITEM_HAND%', '%ENCHANTS%', '',
+        '%USER_CLASS%', '%USER_BANNED_CLASS%', '%USER_LEVEL%', '',
+        '%ITEM_SET%', '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
+        '', '%GENERATOR_SKILLS%',
+        '%GENERATOR_DEFENSE%', '%GENERATOR_DAMAGE%',
+        '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
+        '%GENERATOR_STATS%', '%GENERATOR_FABLED_ATTR%',
+        '%GENERATOR_SOCKETS_GEM%', '%GENERATOR_SOCKETS_ESSENCE%', '%GENERATOR_SOCKETS_RUNE%',
+      ],
       tier: 'common', unbreakable: false, 'item-flags': ['*'], color: '-1,-1,-1',
       level: { min: 1, max: 50 },
       generator: {
         'prefix-chance': 80.0, 'suffix-chance': 0.0,
         materials: { reverse: false, 'black-list': [] },
-        enchantments: { minimum: 1, maximum: 2, 'safe-only': true, list: {} },
+        enchantments: { minimum: 1, maximum: 2, 'safe-only': false, list: {} },
         'defense-types': {
           minimum: 1, maximum: 1,
           'lore-format': ['%DEFENSE_PHYSICAL%'],
@@ -1053,7 +1085,7 @@ function renderPenetration(data, sid) {
               `${liveCheck(sid, `${id}.percent-pen`, isPct, pctId, 'percent-pen')}
                <span class="muted small">Checked = percent, unchecked = flat</span>`)}
             ${cardRow('Enabled', liveCheck(sid, `${id}.enabled`, enabled, enId, 'enabled'))}
-            ${cardRow('Hooks (damage types)', jsonTextarea(sid, `${id}.hooks`, pt.hooks ?? []))}
+            ${cardRow('Hooks (damage types)', lineArrayField(sid, `${id}.hooks`, pt.hooks ?? []))}
           </div>
         </details>
       </div>`;
@@ -1100,7 +1132,7 @@ function renderBuffs(data, sid) {
             ${cardRow('Capacity', editNum(sid,  `${id}.capacity`, bt.capacity ?? 200, 'edit-input--inline'))}
             ${cardRowFormat(sid, id, bt.format ?? '')}
             ${cardRow('Enabled', liveCheck(sid, `${id}.enabled`, enabled, enId, 'enabled'))}
-            ${cardRow('Hooks (damage types)', jsonTextarea(sid, `${id}.hook`, bt.hook ?? []))}
+            ${cardRow('Hooks (damage types)', lineArrayField(sid, `${id}.hook`, bt.hook ?? []))}
           </div>
         </details>
       </div>`;
@@ -1489,11 +1521,11 @@ function lorePreview(lines) {
   }</div>`;
 }
 
-/** lore-format textarea + MC preview. */
+/** lore-format textarea (line-by-line) + MC preview. */
 function igLoreFormat(sid, fname, path, lines) {
-  return `
-    ${igJson(sid, fname, path, lines ?? [])}
-    ${lorePreview(lines ?? [])}`;
+  const arr = Array.isArray(lines) ? lines : [];
+  return `${igLineArray(sid, fname, path, arr)}
+    ${arr.length ? lorePreview(arr) : ''}`;
 }
 
 /**
@@ -1619,6 +1651,30 @@ function buildItemStatsGroup(sid, fname, basePath, groupData) {
 }
 
 /** Collapsible sockets section (GEM / ESSENCE / RUNE). */
+/**
+ * Simplified pool table for sockets — only chance matters,
+ * no scale-by-level / min / max / flat / round.
+ */
+function buildSocketPool(sid, fname, basePath, listData) {
+  if (!listData || typeof listData !== 'object') return '<p class="muted small">No entries. Use ↺ Sync to populate.</p>';
+  const entries = Object.entries(listData).filter(([, v]) => v && typeof v === 'object');
+  if (!entries.length) return '<p class="muted small">No entries. Use ↺ Sync to populate.</p>';
+
+  const rows = entries.map(([id, e]) => {
+    const p      = `${basePath}.${id}`;
+    const active = (e.chance ?? 0) > 0;
+    return `<tr class="${active ? '' : 'row-disabled'}">
+      <td><code>${esc(id)}</code></td>
+      <td>${igNum(sid, fname, `${p}.chance`, e.chance ?? 0)}</td>
+    </tr>`;
+  }).join('');
+
+  return `<table class="tbl tbl-compact">
+    <thead><tr><th>Tier</th><th>Chance %</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
 function buildSocketsSection(sid, fname, socketsData) {
   if (!socketsData || typeof socketsData !== 'object' || !Object.keys(socketsData).length) return '';
 
@@ -1644,6 +1700,14 @@ function buildSocketsSection(sid, fname, socketsData) {
           onclick="APP.igSyncSocket('${sid}','${escJs(fname)}','${type}','${modSid}')">↺ Sync from ${modSid}</button>`
       : '';
 
+    // Migrate legacy `title` field: prepend to lore-format if not already there, then delete it
+    if (td.title) {
+      const lf = td['lore-format'] ?? [];
+      if (lf[0] !== td.title) lf.unshift(td.title);
+      td['lore-format'] = lf;
+      delete td.title;
+    }
+
     return igCollapsible(`${modIcon} ${type}`, `
       <div class="info-row">
         <span class="info-label">Min / Max slots</span>
@@ -1653,13 +1717,61 @@ function buildSocketsSection(sid, fname, socketsData) {
           ${igNum(sid, fname, `${bp}.maximum`, td.maximum ?? 0)}
         </div>
       </div>
-      ${cardRow('Lore format', igLoreFormat(sid, fname, `${bp}.lore-format`, td['lore-format'] ?? []) + socketSyncBtn)}
-      <p class="ig-subhead">Socket pool (category → chance) ${socketSyncBtn}</p>
-      ${buildStatPool(sid, fname, `${bp}.list`, td.list ?? {})}
+      ${cardRow('Lore format', `${igLoreFormat(sid, fname, `${bp}.lore-format`, td['lore-format'] ?? [])}
+        <p class="muted small" style="margin-top:2px">First line is the section title shown to the player (e.g. <code>&amp;8&amp;m     &amp;f「 GEMS 」&amp;m     </code>).</p>`)}
+      <p class="ig-subhead">Socket pool (tier → chance) ${socketSyncBtn}</p>
+      ${buildSocketPool(sid, fname, `${bp}.list`, td.list ?? {})}
       ${loadedHint}`);
   }).join('');
 
   return igCollapsible('🔮 Sockets', inner);
+}
+
+/**
+ * Quality-of-life editor for generator.materials.model-data.
+ * DEFAULT: one CMD number per line.
+ * SPECIAL: per-material entries, each with a name and number list.
+ */
+function igMaterialModelData(sid, fname, basePath, current) {
+  const md       = (current && typeof current === 'object') ? current : {};
+  const defArr   = Array.isArray(md.default) ? md.default : [];
+  const special  = (md.special && typeof md.special === 'object') ? md.special : {};
+  const sfx      = `${sid}-${fname.replace(/[^a-z0-9]/gi,'_')}`;
+
+  const specialHtml = Object.entries(special).map(([mat, nums]) => {
+    const arr  = Array.isArray(nums) ? nums : [];
+    const path = `${basePath}.special.${mat}`;
+    return `<div style="border:1px solid #2a2a3a;border-radius:3px;margin-bottom:5px;padding:5px 8px;background:#1a1a1e">
+      <div style="display:flex;gap:5px;align-items:center;margin-bottom:3px">
+        <input class="edit-input edit-id" style="flex:1;font-size:11px" value="${esc(mat)}"
+          placeholder="material_name"
+          onblur="if(this.value.trim()&&this.value.trim()!=='${escJs(mat)}')APP.igMdRenameSpecial('${sid}','${escJs(fname)}','${escJs(basePath)}','${escJs(mat)}',this.value.trim())"
+          onkeydown="if(event.key==='Enter')this.blur()">
+        <button style="padding:1px 5px;background:#3a1e1e;border:1px solid #8a3a3a;border-radius:3px;color:#ea8f8f;cursor:pointer;font-size:10px"
+          onclick="if(confirm('Remove \\'${escJs(mat)}\\'?'))APP.igMdRemoveSpecial('${sid}','${escJs(fname)}','${escJs(basePath)}','${escJs(mat)}')">🗑</button>
+      </div>
+      <textarea class="obj-textarea" rows="${Math.max(2, arr.length + 1)}" placeholder="one CMD number per line"
+        onblur="APP.igUpdateNumArray('${sid}','${escJs(fname)}','${escJs(path)}',this.value)">${esc(arr.join('\n'))}</textarea>
+    </div>`;
+  }).join('');
+
+  const newMatId = `md-new-${sfx}`;
+  return `
+    <div style="font-size:11px;font-weight:700;color:#aaa;letter-spacing:1px;margin-bottom:8px">MODEL DATA</div>
+    <div style="margin-bottom:10px">
+      <div style="font-size:11px;font-weight:600;color:#888;margin-bottom:3px">DEFAULT</div>
+      <textarea class="obj-textarea" rows="${Math.max(2, defArr.length + 1)}" placeholder="one CMD number per line"
+        onblur="APP.igUpdateNumArray('${sid}','${escJs(fname)}','${escJs(basePath+'.default')}',this.value)">${esc(defArr.join('\n'))}</textarea>
+    </div>
+    <div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+        <span style="font-size:11px;font-weight:600;color:#888">SPECIAL</span>
+        <input id="${newMatId}" class="edit-input" style="font-size:11px;width:140px" placeholder="material_name">
+        <button class="btn-add-entry" style="font-size:10px;padding:2px 7px"
+          onclick="(function(){const el=document.getElementById('${newMatId}');APP.igMdAddSpecial('${sid}','${escJs(fname)}','${escJs(basePath)}',el.value);el.value=''})()">+ Add</button>
+      </div>
+      ${specialHtml || '<p class="muted small">No special materials yet.</p>'}
+    </div>`;
 }
 
 /** Render one item-generator YAML file as a structured card. */
@@ -1738,7 +1850,10 @@ function renderItemGenFile(sid, fname, data, family) {
     ${header}
     <div class="ig-card__body">
 
-      ${igCollapsible('👁 Lore Preview', lorePreview(lore), true)}
+      ${igCollapsible('👁 Lore', `
+        ${igLineArray(sid, fname, 'lore', lore)}
+        ${lore.length ? lorePreview(lore) : '<p class="muted small">No lore lines yet.</p>'}
+      `, true)}
 
       ${igCollapsible('📋 Basic Info', `
         ${cardRow('Name template',   igField(sid, fname, 'name', data.name ?? '', 'edit-input--format'))}
@@ -1753,7 +1868,7 @@ function renderItemGenFile(sid, fname, data, family) {
         ${cardRow('Unbreakable', igCheck(sid, fname, 'unbreakable', data.unbreakable === true))}
         ${cardRow('Enchanted',   igCheck(sid, fname, 'enchanted',   data.enchanted  === true))}
         ${cardRow('Durability %', igNum(sid, fname, 'durability',  data.durability  ?? 100))}
-        ${cardRow('Model data',   igNum(sid, fname, 'model-data',  data['model-data'] ?? 0))}
+        ${cardRow('Custom Model Data', igNum(sid, fname, 'model-data',  data['model-data'] ?? 0))}
         ${cardRow('Skull hash',   igField(sid, fname, 'skull-hash', data['skull-hash'] ?? ''))}
         ${cardRow('Item flags',   igItemFlags(sid, fname, data['item-flags'] ?? []))}
       `, true)}
@@ -1766,9 +1881,7 @@ function renderItemGenFile(sid, fname, data, family) {
       ${igCollapsible('🧱 Materials', `
         ${cardRow('Reverse blacklist', igCheck(sid, fname, 'generator.materials.reverse', mats.reverse === true))}
         ${cardRow('Black-list (one item per line)', igLineArray(sid, fname, 'generator.materials.black-list', mats['black-list'] ?? []))}
-        ${cardRow('Model data',
-          `${igJson(sid, fname, 'generator.materials.model-data', mats['model-data'] ?? {})}
-           <p class="muted small" style="margin-top:3px"><code>default</code>: list of model-data IDs used for generic materials. <code>special</code>: map of material → [IDs] for specific variants.</p>`)}
+        ${igMaterialModelData(sid, fname, 'generator.materials.model-data', mats['model-data'] ?? {})}
       `)}
 
       ${igCollapsible('🎁 Bonuses', `
@@ -1848,11 +1961,6 @@ function renderItemGenFile(sid, fname, data, family) {
         `${igLineKvField(sid, fname, 'generator.armor-trimmings', gen['armor-trimmings'] ?? {}, 'trim-pattern-id weight')}
          <p class="muted small" style="margin-top:4px">One trim per line — e.g. <code>sentry 1.0</code>. Requires MC 1.20+.</p>`)}
 
-      ${igCollapsible(
-        `📜 Lore <span class="muted small" style="font-weight:normal">(${lore.length} lines)</span>`,
-        `${igJson(sid, fname, 'lore', lore)}
-         ${lorePreview(lore)}`
-      )}
 
     </div>
   </div>`;
@@ -1890,12 +1998,11 @@ function renderItemGenerator(data, sid) {
       <div class="entry-actions" style="flex-wrap:wrap;gap:6px">
         ${addBtn}
         <span class="ig-new-wrap">
-          <select id="ig-tpl-${sid}" class="edit-input ig-tpl-select">
-            <option value="">Empty</option>
-            <option value="common">Full template</option>
-            <option value="weapon">Weapon</option>
-            <option value="armor">Armor</option>
-          </select>
+          ${igTplSelect(sid, [
+            { value: 'common', label: 'Full template' },
+            { value: 'weapon', label: 'Weapon'        },
+            { value: 'armor',  label: 'Armor'         },
+          ])}
           <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="new-item.yml"
             onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
           <button class="btn-add-entry" onclick="APP.igAddNewFile('${sid}',document.getElementById('ig-newfname-${sid}').value,document.getElementById('ig-tpl-${sid}').value);document.getElementById('ig-newfname-${sid}').value=''">+ New</button>
@@ -2050,11 +2157,10 @@ function renderSets(data, sid) {
     <div class="entry-actions" style="flex-wrap:wrap;gap:6px">
       ${addBtn}
       <span class="ig-new-wrap">
-        <select id="ig-tpl-${sid}" class="edit-input ig-tpl-select">
-          <option value="">Empty</option>
-          <option value="armor-4pc">4-piece Armor Set</option>
-          <option value="weapon-2pc">2-piece Weapon Set</option>
-        </select>
+        ${igTplSelect(sid, [
+          { value: 'armor-4pc',  label: '4-piece Armor Set'  },
+          { value: 'weapon-2pc', label: '2-piece Weapon Set' },
+        ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-set.yml"
           onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
         <button class="btn-add-entry"
@@ -2208,12 +2314,11 @@ function renderGems(data, sid) {
     <div class="entry-actions" style="flex-wrap:wrap;gap:6px">
       ${addBtn}
       <span class="ig-new-wrap">
-        <select id="ig-tpl-${sid}" class="edit-input ig-tpl-select">
-          <option value="">Empty</option>
-          <option value="damage-gem">Damage Gem</option>
-          <option value="defense-gem">Defense Gem</option>
-          <option value="stat-gem">Stat Gem</option>
-        </select>
+        ${igTplSelect(sid, [
+          { value: 'damage-gem',  label: 'Damage Gem'  },
+          { value: 'defense-gem', label: 'Defense Gem' },
+          { value: 'stat-gem',    label: 'Stat Gem'    },
+        ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-gem.yml"
           onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
         <button class="btn-add-entry"
@@ -2331,11 +2436,10 @@ function renderEssences(data, sid) {
     <div class="entry-actions" style="flex-wrap:wrap;gap:6px">
       ${addBtn}
       <span class="ig-new-wrap">
-        <select id="ig-tpl-${sid}" class="edit-input ig-tpl-select">
-          <option value="">Empty</option>
-          <option value="foot-trail">Foot Trail</option>
-          <option value="magic-helix">Magic Helix</option>
-        </select>
+        ${igTplSelect(sid, [
+          { value: 'foot-trail',   label: 'Foot Trail'   },
+          { value: 'magic-helix',  label: 'Magic Helix'  },
+        ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-essence.yml"
           onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
         <button class="btn-add-entry"
@@ -2400,11 +2504,10 @@ function renderRunes(data, sid) {
     <div class="entry-actions" style="flex-wrap:wrap;gap:6px">
       ${addBtn}
       <span class="ig-new-wrap">
-        <select id="ig-tpl-${sid}" class="edit-input ig-tpl-select">
-          <option value="">Empty</option>
-          <option value="rune-speed">Speed Rune</option>
-          <option value="rune-strength">Strength Rune</option>
-        </select>
+        ${igTplSelect(sid, [
+          { value: 'rune-speed',    label: 'Speed Rune'    },
+          { value: 'rune-strength', label: 'Strength Rune' },
+        ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-rune.yml"
           onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
         <button class="btn-add-entry"
@@ -2524,11 +2627,10 @@ function renderArrows(data, sid) {
     <div class="entry-actions" style="flex-wrap:wrap;gap:6px">
       ${addBtn}
       <span class="ig-new-wrap">
-        <select id="ig-tpl-${sid}" class="edit-input ig-tpl-select">
-          <option value="">Empty</option>
-          <option value="basic">Basic Arrow</option>
-          <option value="explosive">Explosive Arrow</option>
-        </select>
+        ${igTplSelect(sid, [
+          { value: 'basic',     label: 'Basic Arrow'     },
+          { value: 'explosive', label: 'Explosive Arrow' },
+        ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-arrow.yml"
           onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
         <button class="btn-add-entry"
@@ -2632,11 +2734,10 @@ function renderConsumables(data, sid) {
     <div class="entry-actions" style="flex-wrap:wrap;gap:6px">
       ${addBtn}
       <span class="ig-new-wrap">
-        <select id="ig-tpl-${sid}" class="edit-input ig-tpl-select">
-          <option value="">Empty</option>
-          <option value="potion">Health Potion</option>
-          <option value="food">Food</option>
-        </select>
+        ${igTplSelect(sid, [
+          { value: 'potion', label: 'Health Potion' },
+          { value: 'food',   label: 'Food'          },
+        ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-item.yml"
           onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
         <button class="btn-add-entry"
@@ -2996,27 +3097,98 @@ function renderBuildPreview(_data, _sid) {
 
 function renderFabledAttributes(data, sid) {
   if (!data || typeof data !== 'object') return '<div class="empty-state">No data.</div>';
-  const entries = Object.entries(data).filter(([, v]) => v && typeof v === 'object');
-  if (!entries.length) return '<div class="empty-state">No attributes found.</div>';
 
-  // Data is pre-slimmed to { display, max, icon-lore } by SECTION_SLIM
+  // Build datalist from all 6 stat categories for autocomplete
+  const statCats = [
+    { key: 'damage',      label: 'Damage Types'   },
+    { key: 'defense',     label: 'Defense Types'  },
+    { key: 'general',     label: 'General Stats'  },
+    { key: 'penetration', label: 'Penetration'    },
+    { key: 'dmgbuff',    label: 'Damage Buffs %' },
+    { key: 'defbuff',    label: 'Defense Buffs %'},
+  ];
+  const dlId = `fa-stat-dl-${sid}`;
+  const datalistHtml = `<datalist id="${dlId}">${
+    statCats.flatMap(cat => {
+      const loaded = STATE.loaded?.[cat.key];
+      return loaded ? Object.keys(loaded).filter(k => !k.startsWith('_')).map(k => `<option value="${esc(k)}" label="${esc(cat.label)}">`) : [];
+    }).join('')
+  }</datalist>`;
+
+  const entries = Object.entries(data).filter(([, v]) => v && typeof v === 'object');
+
   const cards = entries.map(([key, attr]) => {
-    const loreHtml = (attr['icon-lore'] ?? []).map(l =>
-      `<div class="lore-line">${mc.toHtml(String(l))}</div>`).join('');
+    const loreArr = Array.isArray(attr.lore) ? attr.lore : [];
+    const stats   = (attr.stats && typeof attr.stats === 'object' && !Array.isArray(attr.stats)) ? attr.stats : {};
+
+    // Stats rows: statId → formula string
+    const statRows = Object.entries(stats).map(([statId, formula]) => `
+      <div style="display:flex;gap:5px;align-items:center;margin-bottom:3px">
+        <code style="min-width:130px;font-size:11px;color:#8fb8ea">${esc(statId)}</code>
+        <input class="edit-input" style="flex:1;font-size:11px" value="${esc(formula ?? 'a')}"
+          placeholder="formula"
+          title="a = attribute level, v = current stat value"
+          onblur="APP.updateField('${sid}','${escJs(key+'.stats.'+statId)}',this.value.trim())">
+        <span class="muted small" style="font-size:10px;white-space:nowrap">a=lvl</span>
+        <button style="padding:1px 4px;background:#3a1e1e;border:1px solid #8a3a3a;border-radius:3px;color:#ea8f8f;cursor:pointer;font-size:10px;line-height:1.3"
+          onclick="APP.faRemoveStat('${sid}','${escJs(key)}','${escJs(statId)}')">✕</button>
+      </div>`).join('') || '<p class="muted small" style="margin:0 0 4px">No stats defined.</p>';
+
+    // Add-stat input with datalist
+    const addStatInputId = `fa-add-stat-${sid}-${key.replace(/[^a-z0-9]/gi,'_')}`;
+
     return `
-      <div class="item-card" style="min-width:180px;max-width:260px">
-        <div class="item-card__header" style="cursor:default">
-          <span class="item-card__icon">⭐</span>
-          <strong>${esc(attr.display ?? key)}</strong>
-          <span class="badge" style="margin-left:auto">max: ${esc(attr.max ?? '?')}</span>
-        </div>
-        ${loreHtml ? `<div class="item-card__body"><div class="lore-preview">${loreHtml}</div></div>` : ''}
+      <div class="item-card" style="min-width:340px;max-width:520px">
+        <details class="card-details" data-key="${esc(sid)}-fa-${esc(key)}" open>
+          <summary class="item-card__header">
+            <span class="item-card__icon">⭐</span>
+            <input class="edit-input edit-id" value="${esc(key)}" title="Attribute key"
+              onblur="if(this.value.trim()&&this.value.trim()!=='${escJs(key)}')APP.renameEntry('${sid}','${escJs(key)}',this.value.trim())"
+              onkeydown="if(event.key==='Enter')this.blur()">
+            <span class="muted small" style="font-size:11px">display:</span>
+            <input class="edit-input" style="width:90px;font-size:11px" value="${esc(attr.display ?? key)}"
+              placeholder="Display name"
+              onblur="APP.updateField('${sid}','${escJs(key+'.display')}',this.value)">
+            <span class="muted small" style="font-size:11px">max:</span>
+            <input class="edit-input edit-input--num" style="width:55px;font-size:11px" type="number"
+              value="${esc(attr.max ?? 100)}"
+              oninput="APP.updateField('${sid}','${escJs(key+'.max')}',+this.value)">
+            <button class="btn-icon btn-del" style="margin-left:auto"
+              onclick="if(confirm('Remove attribute \\'${escJs(key)}\\'?'))APP.removeEntry('${sid}','${escJs(key)}')">🗑</button>
+          </summary>
+          <div class="item-card__body">
+            ${cardRow('Lore (icon-lore)', lineArrayField(sid, `${key}.lore`, loreArr))}
+            ${loreArr.length ? lorePreview(loreArr) : ''}
+
+            <div style="margin-top:10px">
+              <div style="font-size:12px;font-weight:700;color:#bbb;margin-bottom:5px">📐 Stats
+                <span class="muted small" style="font-weight:normal;font-size:10px">(a = attr level, v = stat val)</span>
+              </div>
+              ${statRows}
+              <div style="display:flex;gap:5px;margin-top:5px;align-items:center">
+                <input id="${addStatInputId}" class="edit-input" style="font-size:11px;width:150px"
+                  placeholder="stat-id" list="${dlId}">
+                <button class="btn-add-entry" style="font-size:11px;padding:2px 8px"
+                  onclick="(function(){const el=document.getElementById('${addStatInputId}');APP.faAddStat('${sid}','${escJs(key)}',el.value);el.value=''})()">+ Add stat</button>
+              </div>
+            </div>
+          </div>
+        </details>
       </div>`;
   }).join('');
 
+  const addRow = `
+    <div style="display:flex;gap:6px;margin-top:12px;align-items:center;flex-wrap:wrap">
+      <input id="fa-new-key-${sid}" class="edit-input" placeholder="AttributeKey (e.g. Strength)" style="width:220px">
+      <button class="btn-add-entry"
+        onclick="(function(){const k=document.getElementById('fa-new-key-${sid}').value.trim();if(k){APP.addEntry('${sid}',k,{display:k,max:100,lore:[],stats:{}});document.getElementById('fa-new-key-${sid}').value=''}})()">+ Add attribute</button>
+    </div>`;
+
   return `
-    <p class="muted small" style="margin-bottom:12px">Read-only — load <code>attributes.yml</code>. Item gen syncs fabled attribute lore &amp; pool entries from here.</p>
-    <div class="cards-grid">${cards}</div>`;
+    ${datalistHtml}
+    <div class="entry-actions">${collapseAllBtn()}</div>
+    <div class="cards-grid">${cards || '<div class="empty-state">No attributes yet.</div>'}</div>
+    ${addRow}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -3060,6 +3232,8 @@ function renderSkills(data, sid) {
           <span>${esc(name)}</span>
           <span class="badge">max lvl: ${esc(maxLevel)}</span>
           <span class="muted small" style="margin-left:auto;font-size:10px">${esc(fname)}</span>
+          <button class="btn-icon btn-del" title="Remove ${esc(fname)}"
+            onclick="if(confirm('Remove skill file \\'${escJs(fname)}\\'?'))APP.igRemoveFile('${sid}','${escJs(fname)}')">🗑</button>
         </div>
         ${loreHtml ? `<div class="item-card__body"><div class="lore-preview">${loreHtml}</div></div>` : ''}
       </div>`;
@@ -3174,7 +3348,11 @@ function renderClasses(data, sid) {
   const chips = entries.map(([fname, fileData]) => {
     const entry = Object.values(fileData || {}).find(v => v && typeof v === 'object');
     const name  = entry?.name ?? fname.replace(/\.ya?ml$/i, '');
-    return `<span style="display:inline-block;padding:4px 10px;background:#1e2a3a;border:1px solid #3a5a8a;border-radius:20px;color:#8fb8ea;font-size:13px;margin:3px">${esc(name)}</span>`;
+    return `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;background:#1e2a3a;border:1px solid #3a5a8a;border-radius:20px;color:#8fb8ea;font-size:13px;margin:3px">
+      ${esc(name)}
+      <button title="Remove ${esc(fname)}" style="background:none;border:none;color:#ea8f8f;cursor:pointer;font-size:12px;line-height:1;padding:0"
+        onclick="if(confirm('Remove class file \\'${escJs(fname)}\\'?'))APP.igRemoveFile('${sid}','${escJs(fname)}')">✕</button>
+    </span>`;
   }).join('');
 
   return `

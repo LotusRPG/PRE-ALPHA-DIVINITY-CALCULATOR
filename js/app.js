@@ -65,6 +65,20 @@ const SYNCED_NEW = {};
  */
 const FORMULA_PREVIEW = { dmgIn: 100, defIn: 50 };
 
+/**
+ * Last-selected template key per section (e.g. itemgen → 'common').
+ * Persists across re-renders so the user doesn't have to re-select every time.
+ * Exposed on window so renderers.js can read it when building the <select>.
+ */
+const IG_LAST_TEMPLATE = {};
+window.IG_LAST_TEMPLATE = IG_LAST_TEMPLATE;
+
+/**
+ * Persistent open/closed state for all <details data-key> elements.
+ * Survives section navigation — keyed by data-key attribute value.
+ */
+const DETAILS_STATE = {};
+
 // ---------------------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------------------
@@ -99,7 +113,12 @@ const SECTION_SLIM = {
     const out = {};
     Object.entries(data).forEach(([k, v]) => {
       if (v && typeof v === 'object')
-        out[k] = { display: v.display ?? k, max: v.max ?? '', 'icon-lore': v['icon-lore'] ?? [] };
+        out[k] = {
+          display: v.display    ?? k,
+          max:     v.max        ?? 100,
+          lore:    v['icon-lore'] ?? v.lore ?? [],   // Fabled stores it as icon-lore
+          stats:   v.stats      ?? {},               // {stat-id: 'formula', ...}
+        };
     });
     return out;
   },
@@ -165,10 +184,8 @@ function renderSection(sectionId) {
   if (sectionId === 'settings') { content.innerHTML = buildSettingsSection(); refreshAutoSaveStatus(); return; }
 
   // Save open/closed state of all keyed <details> before wiping the DOM
-  const detailsOpen   = new Set();
-  const detailsClosed = new Set();
   content.querySelectorAll('details[data-key]').forEach(el => {
-    (el.open ? detailsOpen : detailsClosed).add(el.dataset.key);
+    DETAILS_STATE[el.dataset.key] = el.open;
   });
 
   const def = SCHEMA.sections[sectionId];
@@ -246,15 +263,14 @@ function renderSection(sectionId) {
     }
   }
 
-  // Restore open/closed state: override defaults only for elements seen before this render
-  if (detailsOpen.size || detailsClosed.size) {
-    content.querySelectorAll('details[data-key]').forEach(el => {
-      const key = el.dataset.key;
-      if (detailsOpen.has(key))        el.open = true;
-      else if (detailsClosed.has(key)) el.open = false;
-      // New elements (not seen before) keep their default from the rendered HTML
-    });
-  }
+  // Restore open/closed state from persistent DETAILS_STATE
+  content.querySelectorAll('details[data-key]').forEach(el => {
+    const key = el.dataset.key;
+    if (Object.prototype.hasOwnProperty.call(DETAILS_STATE, key)) {
+      el.open = DETAILS_STATE[key];
+    }
+    // New elements (not in DETAILS_STATE) keep their default from the rendered HTML
+  });
 }
 
 /** Filter .item-card elements by text content match (case-insensitive). */
@@ -371,6 +387,26 @@ function updateBadge(sid) {
 }
 
 // ---------------------------------------------------------------------------
+// YAML serialization
+// ---------------------------------------------------------------------------
+
+/**
+ * Serialize data to YAML string, post-processing to quote strings that look
+ * like YAML 1.1 sexagesimal numbers (e.g. "1:2" → would be parsed as 62 by
+ * SnakeYAML on the server).  We wrap them in single-quotes so the server
+ * always sees a string.
+ *
+ * Pattern matched: bare scalar value that is one or more colon-separated
+ * integers (like "1:2", "0:1", "1:2:3").
+ */
+function toYaml(data) {
+  let yaml = YAML.stringify(data);
+  // Quote sexagesimal-looking bare values: "key: 1:2" → "key: '1:2'"
+  yaml = yaml.replace(/(:\s+)(\d+(?::\d+)+)(\s*(?:#.*)?$)/gm, "$1'$2'$3");
+  return yaml;
+}
+
+// ---------------------------------------------------------------------------
 // File loading
 // ---------------------------------------------------------------------------
 
@@ -442,6 +478,47 @@ const APP = {
   filterSection(sectionId, query) {
     SECTION_SEARCH[sectionId] = query;
     applyCardFilter(document.getElementById('content'), query);
+  },
+
+  /** Collapse all <details data-key> in the current section and persist state. */
+  collapseAll() {
+    document.querySelectorAll('#content details[data-key]').forEach(d => {
+      d.open = false;
+      DETAILS_STATE[d.dataset.key] = false;
+    });
+  },
+
+  /** Expand all <details data-key> in the current section and persist state. */
+  expandAll() {
+    document.querySelectorAll('#content details[data-key]').forEach(d => {
+      d.open = true;
+      DETAILS_STATE[d.dataset.key] = true;
+    });
+  },
+
+  /* ── Fabled Attributes — stat helpers ──────────────────────────────── */
+
+  /** Add a stat entry {statId: 'a'} to an attribute's stats map. */
+  faAddStat(sid, attrKey, statId) {
+    statId = String(statId ?? '').trim();
+    if (!statId) return;
+    const data = STATE.loaded[sid];
+    if (!data?.[attrKey]) return;
+    if (!data[attrKey].stats || typeof data[attrKey].stats !== 'object') {
+      data[attrKey].stats = {};
+    }
+    if (!Object.prototype.hasOwnProperty.call(data[attrKey].stats, statId)) {
+      data[attrKey].stats[statId] = 'a';
+      renderSection(_activeSection);
+    }
+  },
+
+  /** Remove a stat entry from an attribute's stats map. */
+  faRemoveStat(sid, attrKey, statId) {
+    const stats = STATE.loaded[sid]?.[attrKey]?.stats;
+    if (!stats) return;
+    delete stats[statId];
+    renderSection(_activeSection);
   },
 
   // ---- Table search ----
@@ -816,7 +893,7 @@ const APP = {
       this.igDownloadAll(sid);
       return;
     }
-    const blob = new Blob([YAML.stringify(data)], { type: 'text/yaml;charset=utf-8' });
+    const blob = new Blob([toYaml(data)], { type: 'text/yaml;charset=utf-8' });
     const url  = URL.createObjectURL(blob);
     const a    = Object.assign(document.createElement('a'), { href: url, download: def.file.split('/').pop() });
     document.body.appendChild(a);
@@ -924,6 +1001,50 @@ const APP = {
       obj = getPath(file, path);
     }
     obj[typeKey] = weight;
+  },
+
+  /* ── Materials model-data (CMD) helpers ─────────────────── */
+
+  /** Parse a newline-separated number list and store as an array of numbers. */
+  igUpdateNumArray(sid, fname, path, text) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const arr = text.split('\n').map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n));
+    setPath(files[fname], path, arr);
+  },
+
+  igMdAddSpecial(sid, fname, basePath, matName) {
+    matName = String(matName ?? '').trim();
+    if (!matName) return;
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const path = `${basePath}.special`;
+    let sp = getPath(files[fname], path);
+    if (!sp || typeof sp !== 'object') { setPath(files[fname], path, {}); sp = getPath(files[fname], path); }
+    if (!Object.prototype.hasOwnProperty.call(sp, matName)) {
+      sp[matName] = [];
+      renderSection(_activeSection);
+    }
+  },
+
+  igMdRemoveSpecial(sid, fname, basePath, matName) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const sp = getPath(files[fname], `${basePath}.special`);
+    if (sp && typeof sp === 'object') { delete sp[matName]; renderSection(_activeSection); }
+  },
+
+  igMdRenameSpecial(sid, fname, basePath, oldName, newName) {
+    newName = String(newName ?? '').trim();
+    if (!newName || oldName === newName) return;
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const sp = getPath(files[fname], `${basePath}.special`);
+    if (!sp || Object.prototype.hasOwnProperty.call(sp, newName)) return;
+    const reordered = {};
+    Object.keys(sp).forEach(k => { reordered[k === oldName ? newName : k] = sp[k]; });
+    setPath(files[fname], `${basePath}.special`, reordered);
+    renderSection(_activeSection);
   },
 
   /* ── Bonus entry helpers ─────────────────────────────────── */
@@ -1140,7 +1261,7 @@ const APP = {
   igDownload(sid, fname) {
     const d = STATE.loaded[sid];
     if (!d?.files?.[fname]) return;
-    const blob = new Blob([YAML.stringify(d.files[fname])], { type: 'text/yaml;charset=utf-8' });
+    const blob = new Blob([toYaml(d.files[fname])], { type: 'text/yaml;charset=utf-8' });
     const url  = URL.createObjectURL(blob);
     const a    = Object.assign(document.createElement('a'), { href: url, download: fname });
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -1164,7 +1285,7 @@ const APP = {
         for (const [fname, fdata] of files) {
           const fh = await targetDir.getFileHandle(fname, { create: true });
           const wr = await fh.createWritable();
-          await wr.write(YAML.stringify(fdata));
+          await wr.write(toYaml(fdata));
           await wr.close();
         }
         return;
@@ -1176,7 +1297,7 @@ const APP = {
 
     const z = new ZipBuilder();
     for (const [fname, fdata] of files) {
-      z.add(family ? `${family}/${fname}` : fname, YAML.stringify(fdata));
+      z.add(family ? `${family}/${fname}` : fname, toYaml(fdata));
     }
     const blob = z.blob();
     const url  = URL.createObjectURL(blob);
@@ -1210,7 +1331,7 @@ const APP = {
           }
           const fh = await targetDir.getFileHandle(fname, { create: true });
           const wr = await fh.createWritable();
-          await wr.write(YAML.stringify(fdata));
+          await wr.write(toYaml(fdata));
           await wr.close();
         }
         return;
@@ -1223,7 +1344,7 @@ const APP = {
     const z = new ZipBuilder();
     for (const [fname, fdata] of files) {
       const family = families[fname] ?? '';
-      z.add(family ? `${family}/${fname}` : fname, YAML.stringify(fdata));
+      z.add(family ? `${family}/${fname}` : fname, toYaml(fdata));
     }
     const blob = z.blob();
     const url  = URL.createObjectURL(blob);
@@ -1295,19 +1416,25 @@ const APP = {
     const format = ids.map(id => `%${prefix}${id.toUpperCase().replace(/-/g, '_')}%`);
     setPath(file, loreFormatPath, format);
 
-    // 2. Sync pool — ensure every ID has an entry (don't overwrite existing ones)
+    // 2. Sync pool — add missing entries AND remove stale ones
     const STAT_DEFAULT = { chance: 0, 'scale-by-level': 1.0, min: 0, max: 0, 'flat-range': false, round: false };
     let pool = getPath(file, poolPath);
     if (!pool || typeof pool !== 'object') {
       setPath(file, poolPath, {});
       pool = getPath(file, poolPath);
     }
-    ids.forEach(id => {
-      // Normalize pool key to lowercase-underscore to avoid capitalization duplicates
-      const poolKey = id.toLowerCase().replace(/[\s-]+/g, '_');
+    // Normalize incoming IDs to pool keys
+    const targetKeys = new Map(ids.map(id => [id.toLowerCase().replace(/[\s-]+/g, '_'), id]));
+
+    // Add missing
+    targetKeys.forEach((origId, poolKey) => {
       if (!Object.prototype.hasOwnProperty.call(pool, poolKey)) {
         pool[poolKey] = JSON.parse(JSON.stringify(STAT_DEFAULT));
       }
+    });
+    // Remove stale (keys in pool that are no longer in source)
+    Object.keys(pool).forEach(k => {
+      if (!targetKeys.has(k)) delete pool[k];
     });
 
     renderSection(_activeSection);
@@ -1364,21 +1491,30 @@ const APP = {
     const loreFormatPath = `generator.sockets.${type}.lore-format`;
     const poolPath       = `generator.sockets.${type}.list`;
 
-    // 1. Sync lore-format
-    const format = tiers.map(t => `%SOCKET_${type}_${t.toUpperCase().replace(/-/g, '_')}%`);
+    // 1. Sync lore-format — preserve non-socket lines (e.g. the header/title line)
+    const newPlaceholders = tiers.map(t => `%SOCKET_${type}_${t.toUpperCase().replace(/-/g, '_')}%`);
+    const existing = getPath(file, loreFormatPath) ?? [];
+    const socketRe = new RegExp(`%SOCKET_${type}_`, 'i');
+    // Keep any line that is NOT a placeholder for this socket type (e.g. the title decoration line)
+    const preserved = Array.isArray(existing) ? existing.filter(l => !socketRe.test(String(l))) : [];
+    const format = [...preserved, ...newPlaceholders];
     setPath(file, loreFormatPath, format);
 
-    // 2. Sync pool — add missing tiers with { chance: 0 }
+    // 2. Sync pool — add missing tiers AND remove stale ones
     let pool = getPath(file, poolPath);
     if (!pool || typeof pool !== 'object') {
       setPath(file, poolPath, {});
       pool = getPath(file, poolPath);
     }
+    const tierSet = new Set(tiers);
+    // Add missing
     tiers.forEach(t => {
       if (!Object.prototype.hasOwnProperty.call(pool, t)) {
         pool[t] = { chance: 0 };
       }
     });
+    // Remove stale
+    Object.keys(pool).forEach(k => { if (!tierSet.has(k)) delete pool[k]; });
 
     renderSection(_activeSection);
   },
@@ -1391,6 +1527,11 @@ const APP = {
     if (d._collapsed) delete d._collapsed[fname];
     updateBadge(sid);
     renderSection(_activeSection);
+  },
+
+  /** Persist the selected template key so it survives re-renders. */
+  igSetLastTemplate(sid, val) {
+    IG_LAST_TEMPLATE[sid] = val;
   },
 
   /** Create a new file entry in a multiFile section, optionally from a template. */
@@ -1808,7 +1949,7 @@ Object.assign(APP, {
               }
               const fh = await targetDir.getFileHandle(fname, { create: true });
               const wr = await fh.createWritable();
-              await wr.write(YAML.stringify(fdata));
+              await wr.write(toYaml(fdata));
               await wr.close();
               saved++;
             } catch (err) { console.error(`Failed to save ${fname}:`, err); failed++; }
@@ -1819,7 +1960,7 @@ Object.assign(APP, {
         try {
           const fileHandle = await AUTOSAVE.dirHandle.getFileHandle(fname, { create: true });
           const writable   = await fileHandle.createWritable();
-          await writable.write(YAML.stringify(data));
+          await writable.write(toYaml(data));
           await writable.close();
           saved++;
         } catch (err) {
@@ -1838,7 +1979,7 @@ Object.assign(APP, {
           Object.keys(data.files || {}).forEach(fname => this.igDownload(sid, fname));
           continue;
         }
-        const blob = new Blob([YAML.stringify(data)], { type: 'text/yaml;charset=utf-8' });
+        const blob = new Blob([toYaml(data)], { type: 'text/yaml;charset=utf-8' });
         const url  = URL.createObjectURL(blob);
         const a    = Object.assign(document.createElement('a'), {
           href: url, download: def.file.split('/').pop(),
