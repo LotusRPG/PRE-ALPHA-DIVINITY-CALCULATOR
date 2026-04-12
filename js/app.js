@@ -1011,6 +1011,44 @@ const APP = {
     setPath(files[fname], path, obj);
   },
 
+  /** Line KV textarea → object with NUMERIC values (parseFloat, fallback 0), multiFile. */
+  igUpdateLineKvNum(sid, fname, path, text) {
+    const files = STATE.loaded[sid]?.files;
+    if (!files?.[fname]) return;
+    const obj = {};
+    text.split('\n').map(l => l.trim()).filter(Boolean).forEach(line => {
+      const idx = line.indexOf(' ');
+      if (idx === -1) obj[line] = 0;
+      else obj[line.slice(0, idx)] = parseFloat(line.slice(idx + 1).trim()) || 0;
+    });
+    setPath(files[fname], path, obj);
+  },
+
+  /** Line KV textarea → object with NUMERIC values (parseFloat, fallback 0), single-file section. */
+  updateLineKvNum(sid, path, text) {
+    const obj = {};
+    text.split('\n').map(l => l.trim()).filter(Boolean).forEach(line => {
+      const idx = line.indexOf(' ');
+      if (idx === -1) obj[line] = 0;
+      else obj[line.slice(0, idx)] = parseFloat(line.slice(idx + 1).trim()) || 0;
+    });
+    setPath(STATE.loaded[sid], path, obj);
+  },
+
+  /** Update the stats map for a Fabled Attribute. Values kept as strings (formulas). */
+  faUpdateStats(sid, attrKey, text) {
+    const data = STATE.loaded[sid];
+    if (!data?.[attrKey]) return;
+    const stats = {};
+    text.split('\n').map(l => l.trim()).filter(Boolean).forEach(line => {
+      const idx = line.indexOf(' ');
+      if (idx === -1) stats[line] = 'a';
+      else stats[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    });
+    data[attrKey].stats = stats;
+    // No re-render needed — textarea blur already reflects the state
+  },
+
   /** Update a single key inside a type-picker object (ammo-types / hand-types). */
   igUpdateTypeWeight(sid, fname, path, typeKey, weight) {
     const files = STATE.loaded[sid]?.files;
@@ -1553,6 +1591,17 @@ const APP = {
   /** Persist the selected template key so it survives re-renders. */
   igSetLastTemplate(sid, val) {
     IG_LAST_TEMPLATE[sid] = val;
+  },
+
+  /** Delete a template from ITEM_TEMPLATES and re-render the toolbar. */
+  igDeleteTemplate(sid, tplKey) {
+    if (!tplKey) { alert('Select a template to delete first.'); return; }
+    if (!confirm(`Delete template "${tplKey}"?`)) return;
+    if (window.ITEM_TEMPLATES?.[sid]) {
+      delete window.ITEM_TEMPLATES[sid][tplKey];
+    }
+    if (IG_LAST_TEMPLATE[sid] === tplKey) IG_LAST_TEMPLATE[sid] = '';
+    renderSection(_activeSection);
   },
 
   /** Create a new file entry in a multiFile section, optionally from a template. */

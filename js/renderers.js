@@ -123,6 +123,43 @@ function lineArrayField(sid, path, value) {
     onblur="APP.updateLineArray('${sid}','${esc(path)}',this.value)">${esc(text)}</textarea>`;
 }
 
+/**
+ * Same as lineArrayField but updates a live lore preview div (by id) on every keystroke.
+ */
+function lineArrayFieldWithPreview(sid, path, value, previewId) {
+  const arr  = Array.isArray(value) ? value : [];
+  const text = arr.join('\n');
+  const rows = Math.max(2, arr.length + 1);
+  return `<textarea class="obj-textarea" rows="${rows}" placeholder="one value per line"
+    oninput="(function(t){const el=document.getElementById('${previewId}');if(!el)return;el.innerHTML=t.split('\\n').filter(Boolean).map(function(l){return'<div>'+mc.toHtml(l)+'</div>';}).join('');})(this.value)"
+    onblur="APP.updateLineArray('${sid}','${esc(path)}',this.value)">${esc(text)}</textarea>`;
+}
+
+/**
+ * KV textarea for single-file sections (e.g. damage/defense types).
+ * Stores values as numbers (parseFloat, fallback 0).
+ * Format: KEY value per line.
+ */
+function lineKvFieldNum(sid, path, value, placeholder = 'KEY value') {
+  const obj  = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {};
+  const text = Object.entries(obj).map(([k, v]) => `${k} ${v}`).join('\n');
+  const rows = Math.max(2, Object.keys(obj).length + 1);
+  return `<textarea class="obj-textarea" rows="${rows}" placeholder="${placeholder} (one per line)"
+    onblur="APP.updateLineKvNum('${sid}','${esc(path)}',this.value)">${esc(text)}</textarea>`;
+}
+
+/**
+ * KV textarea for multiFile sections where values are strings (not numbers).
+ * Used for biome/entity/faction modifiers that have numeric values.
+ */
+function igLineKvFieldNum(sid, fname, path, value, placeholder = 'KEY value') {
+  const obj  = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {};
+  const text = Object.entries(obj).map(([k, v]) => `${k} ${v}`).join('\n');
+  const rows = Math.max(2, Object.keys(obj).length + 1);
+  return `<textarea class="obj-textarea" rows="${rows}" placeholder="${placeholder} (one per line)"
+    onblur="APP.igUpdateLineKvNum('${sid}','${escJs(fname)}','${escJs(path)}',this.value)">${esc(text)}</textarea>`;
+}
+
 // ---------------------------------------------------------------------------
 // Action buttons
 // ---------------------------------------------------------------------------
@@ -144,12 +181,17 @@ function collapseAllBtn() {
  * options: array of {value, label} — first entry is implicitly {value:'', label:'Empty'}.
  */
 function igTplSelect(sid, options) {
-  const last = window.IG_LAST_TEMPLATE?.[sid] ?? '';
-  const opts = [{ value: '', label: 'Empty' }, ...options]
+  const last  = window.IG_LAST_TEMPLATE?.[sid] ?? '';
+  const tpls  = window.ITEM_TEMPLATES?.[sid] ?? {};
+  // Only show options whose template key still exists in ITEM_TEMPLATES
+  const avail = options.filter(o => !o.value || tpls[o.value] !== undefined);
+  const opts  = [{ value: '', label: 'Empty' }, ...avail]
     .map(o => `<option value="${esc(o.value)}"${o.value === last ? ' selected' : ''}>${esc(o.label)}</option>`)
     .join('');
   return `<select id="ig-tpl-${sid}" class="edit-input ig-tpl-select"
-    onchange="APP.igSetLastTemplate('${sid}',this.value)">${opts}</select>`;
+    onchange="APP.igSetLastTemplate('${sid}',this.value)">${opts}</select>` +
+    `<button class="btn-icon btn-del" title="Delete selected template"
+      onclick="APP.igDeleteTemplate('${sid}',document.getElementById('ig-tpl-${sid}').value)">🗑</button>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -513,34 +555,24 @@ const ITEM_TEMPLATES = {
 
   sets: {
 
-    'armor-4pc': {
-      name: '&eNew Set',
-      prefix: '&f',
-      suffix: '',
+    wildcat: {
+      name: '&eWild Cat Set',
+      prefix: '&a&fBroken ',
+      suffix: 'of Wild Cat',
       color: { active: '&a', inactive: '&8' },
       elements: {
-        helmet:     { materials: ['DIAMOND_HELMET'],     name: '%prefix%Helmet %suffix%'     },
-        chestplate: { materials: ['DIAMOND_CHESTPLATE'], name: '%prefix%Chestplate %suffix%' },
-        leggings:   { materials: ['DIAMOND_LEGGINGS'],   name: '%prefix%Leggings %suffix%'   },
-        boots:      { materials: ['DIAMOND_BOOTS'],      name: '%prefix%Boots %suffix%'      },
+        helmet:     { materials: ['GOLDEN_HELMET'],     name: '%prefix%Helmet %suffix%'     },
+        chestplate: { materials: ['GOLDEN_CHESTPLATE'], name: '%prefix%Chestplate %suffix%' },
+        leggings:   { materials: ['GOLDEN_LEGGINGS'],   name: '%prefix%Leggings %suffix%'   },
+        boots:      { materials: ['GOLDEN_BOOTS'],      name: '%prefix%Boots %suffix%'      },
       },
       bonuses: { 'by-elements-amount': {
-        '2': { lore: ['%c%&lSet Bonuses (2/4):'], 'item-stats': {}, 'damage-types': {}, 'defense-types': {}, 'potion-effects': {} },
-        '4': { lore: ['%c%&lSet Bonuses (4/4):'], 'item-stats': {}, 'damage-types': {}, 'defense-types': {}, 'potion-effects': {} },
-      } },
-    },
-
-    'weapon-2pc': {
-      name: '&cNew Weapon Set',
-      prefix: '&f',
-      suffix: '',
-      color: { active: '&c', inactive: '&8' },
-      elements: {
-        weapon: { materials: ['DIAMOND_SWORD'], name: '%prefix%Sword %suffix%'    },
-        offhand: { materials: ['GOLDEN_SWORD'], name: '%prefix%Offhand %suffix%' },
-      },
-      bonuses: { 'by-elements-amount': {
-        '2': { lore: ['%c%&lSet Bonuses (2/2):'], 'item-stats': {}, 'damage-types': {}, 'defense-types': {}, 'potion-effects': {} },
+        '2': {
+          lore: ['%c%&lSet Bonuses (2/4):', '%c%▸ +25% PvE Damage', '%c%▸ +10 Max. Health', '%c%▸ Speed I'],
+          'item-stats': { MAX_HEALTH: 10.0, PVE_DAMAGE: 25 },
+          'damage-types': {}, 'defense-types': {},
+          'potion-effects': { SPEED: 1 },
+        },
       } },
     },
 
@@ -548,220 +580,391 @@ const ITEM_TEMPLATES = {
 
   gems: {
 
-    'damage-gem': {
-      material: 'DIAMOND',
-      name: 'New Damage Gem',
-      'socket-display': '&6%name% %ITEM_LEVEL_ROMAN% &7(&f+%value%&7)',
-      lore: ['&7Damage: &f+%value%'],
-      enchanted: false, 'item-flags': ['*'], tier: 'common',
+    'gold-nugget-agility': {
+      material: 'GOLD_NUGGET',
+      name: 'Nugget of Agility',
+      'socket-display': '&aAgility Nugget %ITEM_LEVEL_ROMAN% &7(&fDodge +%ITEM_STAT_DODGE_RATE%%&7)',
+      lore: ['&7Dodge Rate: &f+%ITEM_STAT_DODGE_RATE%%'],
+      tier: 'rare', enchanted: false, 'item-flags': ['*'],
       level: { min: 1, max: 3 },
-      'uses-by-level':         { '1': 3, '2': 3, '3': 3 },
-      'success-rate-by-level': { '1': '70:90', '2': '50:70', '3': '35:60' },
+      'uses-by-level': { '1': 1 },
+      'success-rate-by-level': { '1': '40:80', '2': '35:70', '3': '30:60' },
       'bonuses-by-level': {
-        '1': { 'item-stats': {}, 'damage-types': { physical: '3%' },   'defense-types': {}, skills: {} },
-        '2': { 'item-stats': {}, 'damage-types': { physical: '5%' },   'defense-types': {}, skills: {} },
-        '3': { 'item-stats': {}, 'damage-types': { physical: '7.5%' }, 'defense-types': {}, skills: {} },
+        '1': { 'item-stats': { DODGE_RATE: 2.0 },  'damage-types': {}, 'defense-types': {} },
+        '2': { 'item-stats': { DODGE_RATE: 2.5 },  'damage-types': {}, 'defense-types': {} },
+        '3': { 'item-stats': { DODGE_RATE: 3.0 },  'damage-types': {}, 'defense-types': {} },
       },
-      'target-requirements': { level: {}, type: ['WEAPON'], socket: 'common', module: ['*'] },
+      'target-requirements': { level: { '1': '1:10', '2': '10:20', '3': '30' }, type: ['ARMOR'], socket: 'common', module: ['*'] },
     },
 
-    'defense-gem': {
+    'iron-nugget-defense': {
+      material: 'IRON_NUGGET',
+      name: 'Nugget of Defense',
+      'socket-display': '&aDefense Nugget %ITEM_LEVEL_ROMAN% &7(&fPhys. Def. +%DEFENSE_PHYSICAL%%&7)',
+      lore: ['&7Physical Defense: &f+%DEFENSE_PHYSICAL%%'],
+      tier: 'rare', enchanted: false, 'item-flags': ['*'],
+      level: { min: 1, max: 3 },
+      'uses-by-level': { '1': 1 },
+      'success-rate-by-level': { '1': '40:80', '2': '35:70', '3': '30:60' },
+      'bonuses-by-level': {
+        '1': { 'item-stats': {}, 'damage-types': {}, 'defense-types': { physical: '1.5%'  } },
+        '2': { 'item-stats': {}, 'damage-types': {}, 'defense-types': { physical: '1.75%' } },
+        '3': { 'item-stats': {}, 'damage-types': {}, 'defense-types': { physical: '2.0%'  } },
+      },
+      'target-requirements': { level: { '1': '1:10', '2': '10:20', '3': '30' }, type: ['ARMOR'], socket: 'common', module: ['*'] },
+    },
+
+    'emerald-health': {
       material: 'EMERALD',
-      name: 'New Defense Gem',
-      'socket-display': '&a%name% %ITEM_LEVEL_ROMAN% &7(&f+%value%&7)',
-      lore: ['&7Defense: &f+%value%'],
-      enchanted: false, 'item-flags': ['*'], tier: 'common',
+      name: 'Emerald of Health',
+      'socket-display': '&aHealth Emerald %ITEM_LEVEL_ROMAN% &7(&fHP +%ITEM_STAT_MAX_HEALTH%&7)',
+      lore: ['&7Max. Health: &f+%ITEM_STAT_MAX_HEALTH%'],
+      enchanted: false, tier: 'rare', 'item-flags': ['*'],
       level: { min: 1, max: 3 },
-      'uses-by-level':         { '1': 3, '2': 3, '3': 3 },
-      'success-rate-by-level': { '1': '70:90', '2': '50:70', '3': '35:60' },
+      'uses-by-level': { '1': 1 },
+      'success-rate-by-level': { '1': '40:80', '2': '35:70', '3': '30:60' },
       'bonuses-by-level': {
-        '1': { 'item-stats': {}, 'damage-types': {}, 'defense-types': { physical: '3%' },   skills: {} },
-        '2': { 'item-stats': {}, 'damage-types': {}, 'defense-types': { physical: '5%' },   skills: {} },
-        '3': { 'item-stats': {}, 'damage-types': {}, 'defense-types': { physical: '7.5%' }, skills: {} },
+        '1': { 'item-stats': { MAX_HEALTH: 0.5 }, 'damage-types': {}, 'defense-types': {} },
+        '2': { 'item-stats': { MAX_HEALTH: 1.0 }, 'damage-types': {}, 'defense-types': {} },
+        '3': { 'item-stats': { MAX_HEALTH: 1.5 }, 'damage-types': {}, 'defense-types': {} },
       },
-      'target-requirements': { level: {}, type: ['ARMOR'], socket: 'common', module: ['*'] },
+      'target-requirements': { level: { '1': '1:10', '2': '10:20', '3': '30' }, type: ['ARMOR'], socket: 'rare', module: ['*'] },
     },
 
-    'stat-gem': {
-      material: 'AMETHYST_SHARD',
-      name: 'New Stat Gem',
-      'socket-display': '&d%name% %ITEM_LEVEL_ROMAN% &7(&f+%value%&7)',
-      lore: ['&7Stat bonus: &f+%value%'],
-      enchanted: false, 'item-flags': ['*'], tier: 'rare',
-      level: { min: 1, max: 3 },
-      'uses-by-level':         { '1': 2, '2': 2, '3': 2 },
-      'success-rate-by-level': { '1': '50:70', '2': '35:55', '3': '20:45' },
+    'diamond-damage': {
+      material: 'DIAMOND',
+      name: 'Diamond of Damage',
+      'socket-display': '&6Damage Diamond %ITEM_LEVEL_ROMAN% &7(&fAll Dmg. +%DAMAGE_PHYSICAL%%&7)',
+      lore: ['&7All Damage: &f+%DAMAGE_PHYSICAL%%'],
+      enchanted: false, 'item-flags': ['*'], tier: 'eternal',
+      level: { min: 1, max: 1 },
+      'uses-by-level': { '1': 3 },
+      'success-rate-by-level': { '1': '40:80', '2': '35:70', '3': '30:60' },
       'bonuses-by-level': {
-        '1': { 'item-stats': { MAX_HEALTH: '10' }, 'damage-types': {}, 'defense-types': {}, skills: {} },
-        '2': { 'item-stats': { MAX_HEALTH: '20' }, 'damage-types': {}, 'defense-types': {}, skills: {} },
-        '3': { 'item-stats': { MAX_HEALTH: '30' }, 'damage-types': {}, 'defense-types': {}, skills: {} },
+        '1': { 'item-stats': {}, 'damage-types': { physical: '3.5%', magical: '3.5%', fire: '3.5%', poison: '3.5%', wind: '3.5%', water: '3.5%' }, 'defense-types': {}, skills: { 'ability-1': { level: 1, 'lore-format': ['&bSample Ability: &7[&f%level%&7]'] } } },
+        '2': { 'item-stats': {}, 'damage-types': { physical: '5%',   magical: '5%',   fire: '5%',   poison: '5%',   wind: '5%',   water: '5%'   }, 'defense-types': {} },
+        '3': { 'item-stats': {}, 'damage-types': { physical: '7.5%', magical: '7.5%', fire: '7.5%', poison: '7.5%', wind: '7.5%', water: '7.5%' }, 'defense-types': {} },
       },
-      'target-requirements': { level: {}, type: ['*'], socket: 'rare', module: ['*'] },
+      'target-requirements': { level: { '1': '10' }, type: ['WEAPON'], socket: 'common', module: ['*'] },
     },
 
   },
 
   essences: {
 
-    'foot-trail': {
+    'light-trail': {
       material: 'GLOWSTONE_DUST',
-      name: '&eFoot Trail',
-      lore: ['&7Creates a &fglowing trail &7behind you.'],
-      'socket-display': '&eTrail %ITEM_LEVEL_ROMAN%',
-      enchanted: true,
-      'item-flags': ['*'],
-      tier: 'common',
+      name: 'Essence of Trail',
+      lore: ['&7Creates a &fLight Trail %ITEM_LEVEL_ROMAN% &7behind you.'],
+      'socket-display': '&eLight Trail %ITEM_LEVEL_ROMAN%',
+      enchanted: true, 'item-flags': ['*'], tier: 'common',
       level: { min: 1, max: 1 },
       'uses-by-level': { '1': 1 },
-      'success-rate-by-level': { '1': '75' },
-      effect: { type: 'FOOT', name: 'DUST:225,225,125', amount: 15, speed: 0.2, 'offset-x': 0.25, 'offset-y': 0.1, 'offset-z': 0.25 },
-      'target-requirements': { type: ['ARMOR'], socket: 'default', module: ['*'], level: {} },
+      'success-rate-by-level': { '1': '75', '2': '30 * %ITEM_LEVEL%', '3': '30:50' },
+      effect: { type: 'FOOT', name: 'DUST:225,225,125', speed: 0.2, amount: 15, 'offset-x': 0.25, 'offset-y': 0.1, 'offset-z': 0.25 },
+      'target-requirements': { type: ['ARMOR'], level: { '1': 10 }, module: ['*'], socket: 'default' },
     },
 
     'magic-helix': {
       material: 'REDSTONE',
-      name: '&dMagic Helix',
-      lore: ['&7Creates a &dhelical aura &7around you.'],
-      'socket-display': '&dHelix %ITEM_LEVEL_ROMAN%',
-      enchanted: true,
-      'item-flags': ['*'],
-      tier: 'rare',
+      name: 'Essence of Magic',
+      lore: ['&7Creates a &fMagic Helix %ITEM_LEVEL_ROMAN% &7around you.'],
+      'socket-display': '&cMagic Helix %ITEM_LEVEL_ROMAN%',
+      enchanted: true, 'item-flags': ['*'], tier: 'rare',
       level: { min: 1, max: 2 },
-      'uses-by-level': { '1': 1, '2': 1 },
-      'success-rate-by-level': { '1': '75', '2': '50' },
-      effect: { type: 'HELIX', name: 'WITCH', amount: 10, speed: 0.1, 'offset-x': 0.5, 'offset-y': 0.5, 'offset-z': 0.5 },
-      'target-requirements': { type: ['ARMOR'], socket: 'default', module: ['*'], level: {} },
+      'uses-by-level': { '1': 1 },
+      'success-rate-by-level': { '1': '75', '2': '30 * %ITEM_LEVEL%', '3': '30:50' },
+      effect: { type: 'HELIX', name: 'WITCH', speed: 0, amount: 1, 'offset-x': 0, 'offset-y': 0, 'offset-z': 0 },
+      'target-requirements': { type: ['ARMOR'], level: { '1': 10 }, module: ['*'], socket: 'default' },
     },
 
   },
 
   runes: {
 
-    'rune-speed': {
-      material: 'PRISMARINE_SHARD',
-      name: '&bRune of Speed',
-      lore: ['&7Grants &fSpeed %ITEM_LEVEL_ROMAN% &7effect.'],
-      'socket-display': '&bRune: Speed %ITEM_LEVEL_ROMAN%',
-      'item-flags': ['*'],
-      tier: 'rare',
+    jump: {
+      material: 'PRISMARINE_SHARD', name: 'Rune of Jump',
+      lore: ['&7Grants &fJump %ITEM_LEVEL_ROMAN% &7effect'],
+      'socket-display': '&bRune: Jump %ITEM_LEVEL_ROMAN%',
+      'item-flags': ['*'], tier: 'common',
       level: { min: 1, max: 3 },
-      'uses-by-level': { '1': 1, '2': 1, '3': 1 },
-      'success-rate-by-level': { '1': '75', '2': '55', '3': '35' },
-      effect: 'SPEED',
-      'target-requirements': { type: ['boots'], socket: 'default', module: ['*'], level: {} },
+      'uses-by-level': { '1': 1 },
+      'success-rate-by-level': { '1': '75', '2': '30 * %ITEM_LEVEL%', '3': '30:50' },
+      effect: 'JUMP_BOOST',
+      'target-requirements': { type: ['boots'], level: { '1': '10', '2': '20', '3': '30' }, module: ['*'], socket: 'default' },
     },
 
-    'rune-strength': {
-      material: 'PRISMARINE_SHARD',
-      name: '&cRune of Strength',
-      lore: ['&7Grants &fStrength %ITEM_LEVEL_ROMAN% &7effect.'],
-      'socket-display': '&cRune: Strength %ITEM_LEVEL_ROMAN%',
-      'item-flags': ['*'],
-      tier: 'rare',
+    absorb: {
+      material: 'PRISMARINE_SHARD', name: 'Rune of Absorption',
+      lore: ['&7Grants &fAbsorption %ITEM_LEVEL_ROMAN% &7effect'],
+      'socket-display': '&bRune: Absorption %ITEM_LEVEL_ROMAN%',
+      'item-flags': ['*'], tier: 'superior',
+      level: { min: 1, max: 2 },
+      'uses-by-level': { '1': 1 },
+      'success-rate-by-level': { '1': '75', '2': '30 * %ITEM_LEVEL%', '3': '30:50' },
+      effect: 'ABSORPTION',
+      'target-requirements': { type: ['chestplate'], level: { '1': '10', '2': '20', '3': '30' }, module: ['*'], socket: 'default' },
+    },
+
+    strength: {
+      material: 'PRISMARINE_SHARD', name: 'Rune of Strength',
+      lore: ['&7Grants &fStrength %ITEM_LEVEL_ROMAN% &7effect'],
+      'socket-display': '&bRune: Strength %ITEM_LEVEL_ROMAN%',
+      'item-flags': ['*'], tier: 'rare',
       level: { min: 1, max: 3 },
-      'uses-by-level': { '1': 1, '2': 1, '3': 1 },
-      'success-rate-by-level': { '1': '75', '2': '55', '3': '35' },
+      'uses-by-level': { '1': 1 },
+      'success-rate-by-level': { '1': '75', '2': '30 * %ITEM_LEVEL%', '3': '30:50' },
       effect: 'STRENGTH',
-      'target-requirements': { type: ['WEAPON'], socket: 'default', module: ['*'], level: {} },
+      'target-requirements': { type: ['WEAPON'], level: { '1': '10', '2': '20', '3': '30' }, module: ['*'], socket: 'default' },
+    },
+
+    speed: {
+      material: 'PRISMARINE_SHARD', name: 'Rune of Speed',
+      lore: ['&7Grants &fSpeed %ITEM_LEVEL_ROMAN% &7effect'],
+      'socket-display': '&bRune: Speed %ITEM_LEVEL_ROMAN%',
+      'item-flags': ['*'], tier: 'rare',
+      level: { min: 1, max: 3 },
+      'uses-by-level': { '1': 1 },
+      'success-rate-by-level': { '1': '75', '2': '30 * %ITEM_LEVEL%', '3': '30:50' },
+      effect: 'SPEED',
+      'target-requirements': { type: ['boots'], level: { '1': '10', '2': '20', '3': '30' }, module: ['*'], socket: 'default' },
+    },
+
+    resist: {
+      material: 'PRISMARINE_SHARD', name: 'Rune of Resistance',
+      lore: ['&7Grants &fResistance %ITEM_LEVEL_ROMAN% &7effect'],
+      'socket-display': '&bRune: Resistance %ITEM_LEVEL_ROMAN%',
+      'item-flags': ['*'], tier: 'fabled',
+      level: { min: 1, max: 1 },
+      'uses-by-level': { '1': 1 },
+      'success-rate-by-level': { '1': '75', '2': '30 * %ITEM_LEVEL%', '3': '30:50' },
+      effect: 'RESISTANCE',
+      'target-requirements': { type: ['chestplate'], level: { '1': '10', '2': '20', '3': '30' }, module: ['*'], socket: 'default' },
+    },
+
+    luck: {
+      material: 'PRISMARINE_SHARD', name: 'Rune of Luck',
+      lore: ['&7Grants &fLuck %ITEM_LEVEL_ROMAN% &7effect'],
+      'socket-display': '&bRune: Luck %ITEM_LEVEL_ROMAN%',
+      'item-flags': ['*'], tier: 'common',
+      level: { min: 1, max: 1 },
+      'uses-by-level': { '1': 1 },
+      'success-rate-by-level': { '1': '75', '2': '30 * %ITEM_LEVEL%', '3': '30:50' },
+      effect: 'LUCK',
+      'target-requirements': { type: ['WEAPON'], level: { '1': '10', '2': '20', '3': '30' }, module: ['*'], socket: 'default' },
     },
 
   },
 
   arrows: {
 
-    basic: {
-      material: 'ARROW',
-      name: '&fNew Arrow',
-      lore: ['&7A custom arrow.'],
-      tier: 'common',
-      enchanted: false,
-      'item-flags': ['HIDE_ATTRIBUTES'],
-      unbreakable: false,
-      level: { min: 1, max: 10 },
+    pierce: {
+      material: 'ARROW', name: 'Piercing Arrow',
+      lore: ['&f⚔ &7Arrow Damage: &c-10%', '&f⚔ &7Enemy Defense: &a-50%', '', '&7This arrow will &fignore 50%&7 of enemy', '&7defense, but doing &f10% less &7damage.'],
+      tier: 'common', level: { min: 1, max: 1 },
       'bonuses-by-level': {
-        '1':  { 'additional-stats': {}, 'additional-damage': {}, 'defense-ignoring': {} },
-        '5':  { 'additional-stats': {}, 'additional-damage': { physical: '10%' }, 'defense-ignoring': {} },
-        '10': { 'additional-stats': {}, 'additional-damage': { physical: '20%' }, 'defense-ignoring': {} },
+        '1': { 'additional-stats': {}, 'additional-damage': { physical: '-10.0%' }, 'defense-ignoring': { physical: '50.0%' } },
       },
-      'on-hit-actions': {},
-      'on-fly-actions': {},
-    },
-
-    explosive: {
-      material: 'ARROW',
-      name: '&cExplosive Arrow',
-      lore: ['&7Explodes on impact.'],
-      tier: 'rare',
-      enchanted: true,
-      'item-flags': ['HIDE_ATTRIBUTES', 'HIDE_ENCHANTS'],
-      unbreakable: false,
-      level: { min: 1, max: 10 },
-      'bonuses-by-level': {
-        '1': { 'additional-stats': {}, 'additional-damage': { physical: '15%' }, 'defense-ignoring': {} },
+      'on-fly-actions': {
+        default: {
+          'target-selectors': { self: ['[SELF]'] },
+          conditions: { list: [], 'actions-on-fail': 'null' },
+          'action-executors': ['[PARTICLE_SIMPLE] ~name: REDSTONE:255,255,255; ~amount: 1; ~offset:0,0,0; ~speed: 0; ~target: self;'],
+        },
       },
       'on-hit-actions': {
         default: {
-          'target-selectors': {},
-          conditions: { list: [], 'actions-on-fail': 'CANCEL' },
-          'action-executors': [],
+          'target-selectors': { sight: ['[FROM_SIGHT] ~distance: 3; ~party-member: false; ~attackable: true; ~allow-self: false;'] },
+          conditions: { list: [], 'actions-on-fail': 'null' },
+          'action-executors': ['[PARTICLE_SIMPLE] ~name: ITEM_CRACK:IRON_SWORD; ~offset:0.2,0.2,0.2; ~speed: 0.2; ~amount: 50; ~target: sight;'],
         },
       },
-      'on-fly-actions': {},
+      'target-requirements': {},
+    },
+
+    flame: {
+      material: 'ARROW', name: 'Flame Arrow',
+      lore: ['&f⚔ &7Fire Damage: &a+10%', '&f⚔ &7Fire Defense: &c-3%', '', '&7This arrow will &fignite&7 the enemy', '&7for &f5 seconds&7 on hit.'],
+      tier: 'common', level: { min: 1, max: 1 },
+      'bonuses-by-level': {
+        '1': { 'additional-stats': { BURN_RATE: 100.0 }, 'additional-damage': { fire: '10.0%' }, 'defense-ignoring': { fire: '3.0%' } },
+      },
+      'on-fly-actions': {
+        default: {
+          'target-selectors': { self: ['[SELF]'] },
+          conditions: { list: [], 'actions-on-fail': 'null' },
+          'action-executors': ['[PARTICLE_SIMPLE] ~name: FLAME; ~amount: 1; ~offset:0,0,0; ~speed: 0; ~target: self;'],
+        },
+      },
+      'on-hit-actions': {
+        default: {
+          'target-selectors': { sight: ['[FROM_SIGHT] ~distance: 3; ~party-member: false; ~attackable: true; ~allow-self: false;'] },
+          conditions: { list: [], 'actions-on-fail': 'null' },
+          'action-executors': ['[PARTICLE_SIMPLE] ~name: LAVA; ~offset:0.3,0.3,0.3; ~speed: 0.2; ~amount: 20; ~target: sight;'],
+        },
+      },
+      'target-requirements': {},
+    },
+
+    'snowball-explosive': {
+      material: 'SNOWBALL', name: 'Explosive Snowball',
+      lore: ['&f⚔ &7Dodge Rate: &c-10%', '&f⚔ &7Burn Rate: &a+15%', '', '&7This arrow will &fexplode &7on', '&7hit and damage all enemies in a', '&7range of &f5 blocks&7.'],
+      tier: 'common', level: { min: 1, max: 1 },
+      'bonuses-by-level': {
+        '1': { 'additional-stats': { BURN_RATE: 15.0, DODGE_RATE: -10.0 }, 'additional-damage': { physical: '10%' }, 'defense-ignoring': {} },
+      },
+      'on-fly-actions': {
+        default: {
+          'target-selectors': { self: ['[SELF]'] },
+          conditions: { list: [], 'actions-on-fail': 'null' },
+          'action-executors': ['[PARTICLE_SIMPLE] ~name: SMOKE_NORMAL; ~amount: 1; ~offset:0,0,0; ~speed: 0; ~target: self;'],
+        },
+      },
+      'on-hit-actions': {
+        default: {
+          'target-selectors': {
+            near: ['[RADIUS] ~distance: 5; ~party-member: false; ~attackable: true; ~allow-self: false;'],
+            all:  ['[RADIUS] ~distance: 5; ~allow-self: true;'],
+            self: ['[SELF]'],
+          },
+          conditions: { list: [], 'actions-on-fail': 'null' },
+          'action-executors': [
+            '[PARTICLE_SIMPLE] ~name: EXPLOSION_LARGE; ~offset:2,2,2; ~speed: 0.1; ~amount: 50; ~target: self;',
+            '[SOUND] ~name: ENTITY_GENERIC_EXPLODE; ~target: all;',
+            '[DAMAGE] ~amount: -50%; ~target: near;',
+          ],
+        },
+      },
+      'target-requirements': {},
+    },
+
+    'arrow-explosive': {
+      material: 'ARROW', name: 'Explosive Arrow',
+      lore: ['&f⚔ &7Dodge Rate: &c-10%', '&f⚔ &7Burn Rate: &a+15%', '', '&7This arrow will &fexplode &7on', '&7hit and damage all enemies in a', '&7range of &f5 blocks&7.'],
+      tier: 'common', level: { min: 1, max: 1 },
+      'bonuses-by-level': {
+        '1': { 'additional-stats': { BURN_RATE: 15.0, DODGE_RATE: -10.0 }, 'additional-damage': { physical: '10%' }, 'defense-ignoring': {} },
+      },
+      'on-fly-actions': {
+        default: {
+          'target-selectors': { self: ['[SELF]'] },
+          conditions: { list: [], 'actions-on-fail': 'null' },
+          'action-executors': ['[PARTICLE_SIMPLE] ~name: SMOKE_NORMAL; ~amount: 1; ~offset:0,0,0; ~speed: 0; ~target: self;'],
+        },
+      },
+      'on-hit-actions': {
+        default: {
+          'target-selectors': {
+            near: ['[RADIUS] ~distance: 5; ~party-member: false; ~attackable: true; ~allow-self: false;'],
+            all:  ['[RADIUS] ~distance: 5; ~allow-self: true;'],
+            self: ['[SELF]'],
+          },
+          conditions: { list: [], 'actions-on-fail': 'null' },
+          'action-executors': [
+            '[PARTICLE_SIMPLE] ~name: EXPLOSION_LARGE; ~offset:2,2,2; ~speed: 0.1; ~amount: 50; ~target: self;',
+            '[SOUND] ~name: ENTITY_GENERIC_EXPLODE; ~target: all;',
+            '[DAMAGE] ~amount: -50%; ~target: near;',
+          ],
+        },
+      },
+      'target-requirements': {},
     },
 
   },
 
   consumables: {
 
-    potion: {
+    'small-loot-potion': {
       material: 'POTION',
-      name: '&aHealth Potion',
-      lore: ['&7Restores &f%health% &7health.'],
+      name: '&eSmall Loot Potion %ITEM_LEVEL_ROMAN%',
+      lore: ['%ITEM_CHARGES%', '&7Cooldown: &f1 minute&7.', '', '%USER_LEVEL%', '%USER_CLASS%', '', '&7Increases a chance to find the item', '&7by &f10%&7 for &f10 minutes&7.'],
       tier: 'common',
-      enchanted: false,
-      'item-flags': ['HIDE_ATTRIBUTES', 'HIDE_POTION_EFFECTS'],
-      unbreakable: false,
-      level: { min: 1, max: 5 },
-      'uses-by-level': { '1': 1, '2': 1, '3': 1, '4': 1, '5': 1 },
-      'variables-by-level': {
-        '1': { health: 20 }, '2': { health: 35 }, '3': { health: 55 },
-        '4': { health: 80 }, '5': { health: 110 },
-      },
-      effects: { health: 20, hunger: 0, saturation: 0 },
-      'user-requirements-by-level': { level: {}, class: {} },
+      'skull-hash': 'eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNjZkM2E3ZTA3ZjVkYWRkNDdiYWRiMTM4MmE1YjE2Mjc4MThlZTE2YTE5YTdjMGJmMjc2OGFlNjI2MjczN2I2In19fQ==',
+      color: '220,220,30',
+      'item-flags': ['*'], enchanted: false,
+      level: { min: 1, max: 3 },
+      effects: { health: 0, hunger: 0, saturation: 0 },
+      'user-requirements-by-level': { level: { '1': 10 }, class: { '1': 'Warrior,Berserker' } },
+      'uses-by-level': { '1': 1, '2': 2, '3': 3 },
       usage: {
         RIGHT: {
-          cooldown: 3.0,
+          cooldown: 1,
           actions: {
             default: {
-              'target-selectors': {},
-              conditions: { list: [], 'actions-on-fail': 'CANCEL' },
+              'target-selectors': { self: ['[SELF]'] },
+              conditions: { list: [], 'actions-on-fail': 'null' },
+              'action-executors': [
+                '[COMMAND_CONSOLE] ~message: qrpg buff %executor% stat LOOT_RATE 10 600; ~target: self;',
+                '[PARTICLE_SIMPLE] ~name: VILLAGER_HAPPY; ~offset: 0.3,0.3,0.3; ~speed: 0.3; ~amount: 50; ~target: self;',
+                '[SOUND] ~name: BLOCK_NOTE_BLOCK_BELL; ~target: self;',
+              ],
+            },
+          },
+        },
+      },
+      'target-requirements': {},
+    },
+
+    'small-health-potion': {
+      material: 'POTION',
+      name: '&a&fSmall Health Potion',
+      lore: ['%ITEM_CHARGES%', '&7Cooldown: &f10 seconds&7.', '', '%USER_LEVEL%', '%USER_CLASS%', '', '&7Restores &f5 HP&7.'],
+      tier: 'common',
+      'skull-hash': 'eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNjZkM2E3ZTA3ZjVkYWRkNDdiYWRiMTM4MmE1YjE2Mjc4MThlZTE2YTE5YTdjMGJmMjc2OGFlNjI2MjczN2I2In19fQ==',
+      color: '220,30,30',
+      'item-flags': ['*'], enchanted: false,
+      level: { min: 1, max: 1 },
+      effects: { health: 5, hunger: 5, saturation: 0 },
+      'user-requirements-by-level': { level: { '1': 3 }, class: { '1': 'Warrior,Mage' } },
+      'uses-by-level': { '1': 3 },
+      usage: {
+        RIGHT: {
+          cooldown: 10,
+          actions: {
+            default: {
+              'target-selectors': { self: ['[SELF] ~entity-health: <100%;'] },
+              conditions: { list: [], 'actions-on-fail': 'null' },
               'action-executors': [],
             },
           },
         },
       },
+      'target-requirements': {},
     },
 
-    food: {
-      material: 'BREAD',
-      name: '&6Hearty Burger',
-      lore: ['&7Restores hunger and saturation.'],
+    burger: {
+      material: 'PLAYER_HEAD',
+      name: '&6Burger on a Plate',
+      lore: ['&7Definitely a hearty burger.', '%ITEM_CHARGES%', '', '%USER_LEVEL%', '%USER_CLASS%', '', '&f• &7Health: &6+5❤&7.', '&f• &7Saturation: &6+3☕&7.', '&f• &7Absorption I: &6%var_potiondurationtext%&7.'],
       tier: 'common',
-      enchanted: false,
-      'item-flags': ['HIDE_ATTRIBUTES'],
-      unbreakable: false,
-      level: { min: 1, max: 1 },
-      'uses-by-level': { '1': 1 },
-      'variables-by-level': { '1': { hunger: 6, saturation: 12 } },
-      effects: { health: 0, hunger: 6, saturation: 12 },
-      'user-requirements-by-level': { level: {}, class: {} },
+      'skull-hash': 'eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNjZkM2E3ZTA3ZjVkYWRkNDdiYWRiMTM4MmE1YjE2Mjc4MThlZTE2YTE5YTdjMGJmMjc2OGFlNjI2MjczN2I2In19fQ==',
+      color: '240,240,20',
+      level: { min: 1, max: 3 },
+      effects: { health: 5, hunger: 5, saturation: 3 },
+      'user-requirements-by-level': { level: { '1': 10 }, class: { '1': 'Warrior,Berserker' } },
+      'uses-by-level': { '1': 1, '2': 2, '3': 3 },
+      'variables-by-level': {
+        '1': { potionDuration: 300, potionDurationText: '15 sec' },
+        '2': { potionDuration: 600, potionDurationText: '30 sec' },
+        '3': { potionDuration: 900, potionDurationText: '45 sec' },
+      },
       usage: {
         RIGHT: {
-          cooldown: 1.0,
-          actions: { default: { 'target-selectors': {}, conditions: { list: [] }, 'action-executors': [] } },
+          cooldown: 10,
+          actions: {
+            default: {
+              'target-selectors': { self: ['[SELF]'] },
+              conditions: { list: [], 'actions-on-fail': 'null' },
+              'action-executors': [
+                '[POTION] ~name: ABSORPTION; ~amount: 1; ~duration: %var_potionduration%; ~target: self;',
+                '[PARTICLE_SIMPLE] ~name: ITEM_CRACK:BREAD; ~offset: 0.1,0.1,0.1; ~speed: 0.1; ~amount: 40; ~target: self;',
+                '[SOUND] ~name: ENTITY_GENERIC_EAT; ~target: self;',
+              ],
+            },
+          },
         },
       },
+      'target-requirements': {},
     },
 
   },
@@ -825,6 +1028,20 @@ function evalForMode(mode, customExpr, vars) {
   }
   // CUSTOM: user-defined expression
   return evalFormula(customExpr, vars);
+}
+
+/**
+ * Evaluate a Fabled Attribute stat formula string.
+ * Variables: a = attribute level, v = current stat value (0 in build context).
+ * Returns 0 on syntax error.
+ */
+function evalFaFormula(formula, a) {
+  try {
+    // eslint-disable-next-line no-new-func
+    return Number(new Function('a', 'v', `"use strict"; return (${formula})`)(a, 0)) || 0;
+  } catch (_) {
+    return 0;
+  }
 }
 
 function buildFormulaPreviewRows(mode, customF) {
@@ -993,10 +1210,13 @@ function renderDamage(data, sid) {
             ${cardRow('Priority', editNum(sid,  `${id}.priority`, dt.priority ?? 1, 'edit-input--inline'))}
             ${cardRowFormat(sid, id, dt.format ?? '')}
             ${cardRow('Attached causes',      lineArrayField(sid, `${id}.attached-damage-causes`,      dt['attached-damage-causes']      ?? []))}
-            ${cardRow('Biome modifiers',      jsonTextarea(sid, `${id}.biome-damage-modifiers`,      dt['biome-damage-modifiers']      ?? {}))}
-            ${cardRow('On-hit actions',       jsonTextarea(sid, `${id}.on-hit-actions`,              dt['on-hit-actions']              ?? {}))}
-            ${cardRow('Entity modifiers',     jsonTextarea(sid, `${id}.entity-type-modifier`,        dt['entity-type-modifier']        ?? {}))}
-            ${cardRow('Faction modifiers',    jsonTextarea(sid, `${id}.mythic-mob-faction-modifier`, dt['mythic-mob-faction-modifier'] ?? {}))}
+            ${cardRow('Biome modifiers',   lineKvFieldNum(sid, `${id}.biome-damage-modifiers`,      dt['biome-damage-modifiers']      ?? {}, 'BIOME multiplier'))}
+            <p class="muted small" style="margin-top:-6px;margin-bottom:4px">e.g. <code>PLAINS 1.0</code> — Bukkit Biome name.</p>
+            ${cardRow('On-hit actions',    jsonTextarea(sid, `${id}.on-hit-actions`, dt['on-hit-actions'] ?? {}))}
+            ${cardRow('Entity modifiers',  lineKvFieldNum(sid, `${id}.entity-type-modifier`,        dt['entity-type-modifier']        ?? {}, 'ENTITY_TYPE multiplier'))}
+            <p class="muted small" style="margin-top:-6px;margin-bottom:4px">e.g. <code>PIG 1.0</code> — Bukkit EntityType name.</p>
+            ${cardRow('Faction modifiers', lineKvFieldNum(sid, `${id}.mythic-mob-faction-modifier`, dt['mythic-mob-faction-modifier'] ?? {}, 'faction multiplier'))}
+            <p class="muted small" style="margin-top:-6px;margin-bottom:4px">e.g. <code>undead 1.5</code> — MythicMobs faction name.</p>
           </div>
         </details>
       </div>`;
@@ -1559,14 +1779,17 @@ function buildStatPool(sid, fname, basePath, listData) {
   const rows = entries.map(([id, e]) => {
     const p      = `${basePath}.${id}`;
     const active = (e.chance ?? 0) > 0;
-    return `<tr class="${active ? '' : 'row-disabled'}">
+    const rowId  = `spr-${(sid + fname + basePath + id).replace(/[^a-z0-9]/gi, '_')}`;
+    return `<tr id="${rowId}" class="${active ? '' : 'row-disabled'}">
       <td><code>${esc(id)}</code></td>
-      <td>${igNum(sid, fname, `${p}.chance`, e.chance ?? 0)}</td>
+      <td><input class="edit-input edit-input--num" type="number" step="1" value="${esc(e.chance ?? 0)}"
+        oninput="APP.igUpdateField('${sid}','${escJs(fname)}','${escJs(p + '.chance')}',+this.value);(function(v){var r=document.getElementById('${rowId}');if(r)r.classList.toggle('row-disabled',+v<=0)})(this.value)">
+      </td>
       <td>${igNum(sid, fname, `${p}.scale-by-level`, e['scale-by-level'] ?? 1.0)}</td>
       <td>${igNum(sid, fname, `${p}.min`, e.min ?? 0)}</td>
       <td>${igNum(sid, fname, `${p}.max`, e.max ?? 0)}</td>
       <td style="text-align:center">${igCheck(sid, fname, `${p}.flat-range`, !!e['flat-range'])}</td>
-      <td style="text-align:center">${igCheck(sid, fname, `${p}.round`,      !!e.round)}</td>
+      <td style="text-align:center">${igCheck(sid, fname, `${p}.round`, !!e.round)}</td>
     </tr>`;
   }).join('');
 
@@ -2251,8 +2474,7 @@ function renderSets(data, sid) {
       ${addBtn}
       <span class="ig-new-wrap">
         ${igTplSelect(sid, [
-          { value: 'armor-4pc',  label: '4-piece Armor Set'  },
-          { value: 'weapon-2pc', label: '2-piece Weapon Set' },
+          { value: 'wildcat', label: 'Wild Cat (4-piece armor)' },
         ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-set.yml"
           onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
@@ -2426,9 +2648,10 @@ function renderGems(data, sid) {
       ${addBtn}
       <span class="ig-new-wrap">
         ${igTplSelect(sid, [
-          { value: 'damage-gem',  label: 'Damage Gem'  },
-          { value: 'defense-gem', label: 'Defense Gem' },
-          { value: 'stat-gem',    label: 'Stat Gem'    },
+          { value: 'gold-nugget-agility', label: 'Agility Nugget'  },
+          { value: 'iron-nugget-defense', label: 'Defense Nugget'  },
+          { value: 'emerald-health',      label: 'Health Emerald'  },
+          { value: 'diamond-damage',      label: 'Damage Diamond'  },
         ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-gem.yml"
           onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
@@ -2561,7 +2784,7 @@ function renderEssences(data, sid) {
       ${addBtn}
       <span class="ig-new-wrap">
         ${igTplSelect(sid, [
-          { value: 'foot-trail',   label: 'Foot Trail'   },
+          { value: 'light-trail',  label: 'Light Trail'  },
           { value: 'magic-helix',  label: 'Magic Helix'  },
         ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-essence.yml"
@@ -2629,8 +2852,12 @@ function renderRunes(data, sid) {
       ${addBtn}
       <span class="ig-new-wrap">
         ${igTplSelect(sid, [
-          { value: 'rune-speed',    label: 'Speed Rune'    },
-          { value: 'rune-strength', label: 'Strength Rune' },
+          { value: 'jump',     label: 'Jump Rune'       },
+          { value: 'absorb',   label: 'Absorption Rune' },
+          { value: 'strength', label: 'Strength Rune'   },
+          { value: 'speed',    label: 'Speed Rune'      },
+          { value: 'resist',   label: 'Resistance Rune' },
+          { value: 'luck',     label: 'Luck Rune'       },
         ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-rune.yml"
           onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
@@ -2652,29 +2879,119 @@ function renderRunes(data, sid) {
   return `${toolbar}<div class="alert alert-warn">⚠️ No rune files loaded yet.</div>`;
 }
 
+/**
+ * Editor for named action groups.
+ * Structure: { groupName: { conditions: {list:[], 'actions-on-fail':'null'}, 'action-executors':[], 'target-selectors':[] } }
+ */
+function igActionGroups(sid, fname, path, data) {
+  const groups = (data && typeof data === 'object') ? data : {};
+  const fid    = `${sid}-${fname.replace(/[^a-z0-9]/gi, '_')}-${path.replace(/[^a-z0-9]/gi, '_')}`;
+
+  const groupsHtml = Object.entries(groups).map(([name, grp]) => {
+    if (!grp || typeof grp !== 'object') return '';
+    const bp        = `${path}.${name}`;
+    const execLines = Array.isArray(grp['action-executors'])       ? grp['action-executors']        : [];
+    const selLines  = Array.isArray(grp['target-selectors'])       ? grp['target-selectors']        : [];
+    const condLines = Array.isArray(grp?.conditions?.list)         ? grp.conditions.list            : [];
+    const condFail  = String(grp?.conditions?.['actions-on-fail']  ?? 'null');
+    return igCollapsible(`📦 ${esc(name)}`, `
+      ${cardRow('Action executors', igLineArray(sid, fname, `${bp}.action-executors`, execLines))}
+      <p class="muted small" style="margin-top:-4px;margin-bottom:6px">One per line — e.g. <code>[PARTICLE_SIMPLE] ~name: FLAME; ~target: self;</code></p>
+      ${cardRow('Target selectors', igLineArray(sid, fname, `${bp}.target-selectors`, selLines))}
+      <p class="muted small" style="margin-top:-4px;margin-bottom:6px">One per line — e.g. <code>[SELF] ~name: self;</code> or <code>[RADIUS] ~distance: 5; ~name: near;</code></p>
+      ${cardRow('Conditions', igLineArray(sid, fname, `${bp}.conditions.list`, condLines))}
+      ${cardRow('On conditions fail', igField(sid, fname, `${bp}.conditions.actions-on-fail`, condFail))}
+      <button class="btn-icon btn-del" style="margin-top:6px"
+        onclick="APP.igRemoveFromPath('${sid}','${escJs(fname)}','${escJs(path)}','${escJs(name)}')">🗑 Remove group</button>
+    `, true);
+  }).join('');
+
+  return `
+    ${groupsHtml || '<p class="muted small" style="margin-bottom:4px">No action groups yet.</p>'}
+    <div class="ig-add-row" style="margin-top:6px">
+      <input id="ag-n-${fid}" class="edit-input" style="width:130px" placeholder="group name" value="default">
+      <button class="btn-add-entry"
+        onclick="APP.igAddToPath('${sid}','${escJs(fname)}','${escJs(path)}',document.getElementById('ag-n-${fid}').value,{'conditions':{'list':[],'actions-on-fail':'null'},'action-executors':[],'target-selectors':[]})">+ Add group</button>
+    </div>`;
+}
+
+/**
+ * Editor for a single usage click slot (RIGHT or LEFT).
+ */
+function igUsageSlot(sid, fname, path, data) {
+  const cooldown = data?.cooldown ?? 0;
+  const actions  = (data?.actions && typeof data.actions === 'object') ? data.actions : {};
+  return `
+    ${cardRow('Cooldown (seconds)', igNum(sid, fname, `${path}.cooldown`, cooldown))}
+    <div style="font-size:11px;font-weight:700;color:#bbb;margin:8px 0 3px">🎬 Actions</div>
+    ${igActionGroups(sid, fname, `${path}.actions`, actions)}`;
+}
+
+/**
+ * Per-level variables editor (level → {varName: value}).
+ * Referenced as %var_varName% in lore/actions.
+ */
+function igVariablesByLevel(sid, fname, path, data) {
+  const levels  = (data && typeof data === 'object') ? data : {};
+  const fid     = `${sid}-${fname.replace(/[^a-z0-9]/gi, '_')}-vbl`;
+  const maxLvl  = Object.keys(levels).reduce((m, k) => Math.max(m, +k || 0), 0);
+
+  const levelsHtml = Object.entries(levels)
+    .sort(([a], [b]) => +a - +b)
+    .map(([lvl, vars]) => igCollapsible(`Level ${lvl}`, `
+      ${igLineKvField(sid, fname, `${path}.${lvl}`, vars ?? {}, 'varName value')}
+      <p class="muted small" style="margin-top:3px">Reference as <code>%var_varName%</code> in lore/actions.</p>
+      <button class="btn-icon btn-del" style="margin-top:4px"
+        onclick="APP.igRemoveFromPath('${sid}','${escJs(fname)}','${escJs(path)}','${escJs(lvl)}')">🗑 Remove level</button>
+    `, true)).join('');
+
+  return `
+    ${levelsHtml || '<p class="muted small">No levels defined.</p>'}
+    <div class="ig-add-row" style="margin-top:6px">
+      <span class="muted small">Level:</span>
+      <input id="vbl-${fid}" class="edit-input edit-input--num" type="number" min="1" value="${maxLvl + 1}" style="width:60px">
+      <button class="btn-add-entry"
+        onclick="APP.igAddToPath('${sid}','${escJs(fname)}','${escJs(path)}',document.getElementById('vbl-${fid}').value,{})">+ Add level</button>
+    </div>`;
+}
+
 // ---------------------------------------------------------------------------
 // Arrows (modules/arrows/items/ folder — one .yml per arrow type)
 // ---------------------------------------------------------------------------
 
-/** Shared "module item" base fields (material, name, lore, visual, level). */
-function moduleItemBaseRows(sid, fname, data) {
+/** Arrow base fields — only what appears in arrow YAMLs. */
+function arrowItemBaseRows(sid, fname, data) {
   const loreLines = Array.isArray(data.lore) ? data.lore : [];
-  const flags     = data['item-flags'] ?? [];
   return `
-    ${cardRow('Material',   igField(sid, fname, 'material',   data.material   ?? 'ARROW'))}
-    ${cardRow('Name',       igField(sid, fname, 'name',       data.name       ?? '', 'edit-input--format'))}
+    ${cardRow('Material', igField(sid, fname, 'material', data.material ?? 'ARROW'))}
+    ${cardRow('Name',     igField(sid, fname, 'name',     data.name     ?? '', 'edit-input--format'))}
     <div class="lore-preview" style="margin-bottom:4px">${mc.toHtml(data.name ?? '')}</div>
     ${cardRow('Lore', igLineArray(sid, fname, 'lore', loreLines))}
     ${lorePreview(loreLines)}
-    ${cardRow('Tier',       igField(sid, fname, 'tier',       data.tier       ?? 'common'))}
-    ${cardRow('Enchanted',  igCheck(sid, fname, 'enchanted',  !!data.enchanted))}
-    ${cardRow('Item flags', igItemFlags(sid, fname, flags))}
-    ${cardRow('Unbreakable',igCheck(sid, fname, 'unbreakable',!!data.unbreakable))}
-    ${cardRow('Model data', igNum(sid,   fname, 'model-data', data['model-data'] ?? -1))}
-    ${cardRow('Color (R,G,B)', igField(sid, fname, 'color',  String(data.color ?? '-1,-1,-1'), 'edit-input--inline'))}
-    ${cardRow('Skull hash', igField(sid, fname, 'skull-hash',data['skull-hash'] ?? ''))}
-    ${cardRow('Enchantments', igJson(sid,fname, 'enchantments', data.enchantments ?? {}))}
-    ${cardRow('Attributes', igJson(sid,  fname, 'attributes', data.attributes ?? {}))}
+    ${cardRow('Tier', igField(sid, fname, 'tier', data.tier ?? 'common'))}
+    ${cardRow('Level min / max',
+      `<div style="display:flex;gap:6px;align-items:center">
+        ${igNum(sid, fname, 'level.min', data.level?.min ?? 1)}
+        <span class="muted">–</span>
+        ${igNum(sid, fname, 'level.max', data.level?.max ?? 1)}
+      </div>`)}`;
+}
+
+/** Consumable base fields — only what appears in consumable YAMLs. */
+function consumableItemBaseRows(sid, fname, data) {
+  const loreLines = Array.isArray(data.lore) ? data.lore : [];
+  const flags     = data['item-flags'] ?? [];
+  return `
+    ${cardRow('Material',      igField(sid, fname, 'material',    data.material        ?? 'POTION'))}
+    ${cardRow('Name',          igField(sid, fname, 'name',        data.name            ?? '', 'edit-input--format'))}
+    <div class="lore-preview" style="margin-bottom:4px">${mc.toHtml(data.name ?? '')}</div>
+    ${cardRow('Lore', igLineArray(sid, fname, 'lore', loreLines))}
+    ${lorePreview(loreLines)}
+    ${cardRow('Tier',          igField(sid, fname, 'tier',        data.tier            ?? 'common'))}
+    ${cardRow('Skull hash',    igField(sid, fname, 'skull-hash',  data['skull-hash']   ?? ''))}
+    ${cardRow('Color (R,G,B)', igField(sid, fname, 'color',       String(data.color    ?? '-1,-1,-1'), 'edit-input--inline'))}
+    ${cardRow('Item flags',    igItemFlags(sid, fname, flags))}
+    ${cardRow('Enchanted',     igCheck(sid, fname, 'enchanted',   !!data.enchanted))}
     ${cardRow('Level min / max',
       `<div style="display:flex;gap:6px;align-items:center">
         ${igNum(sid, fname, 'level.min', data.level?.min ?? 1)}
@@ -2692,9 +3009,9 @@ function renderArrowCard(sid, fname, data) {
     .sort(([a], [b]) => +a - +b)
     .map(([lvl, bonus]) => igCollapsible(
       `✨ Level ${lvl}`,
-      `${igBonusTypeMap(sid, fname, `bonuses-by-level.${lvl}.additional-stats`,  bonus['additional-stats']  ?? {}, 'general',  'Additional Stats',   '📊')}
-       ${igBonusTypeMap(sid, fname, `bonuses-by-level.${lvl}.additional-damage`, bonus['additional-damage'] ?? {}, 'damage',   'Additional Damage',  '⚔️')}
-       ${igLineKvField(sid, fname, `bonuses-by-level.${lvl}.defense-ignoring`,   bonus['defense-ignoring']  ?? {}, 'defense_type: value')}
+      `${igBonusTypeMap(sid, fname, `bonuses-by-level.${lvl}.additional-stats`,  bonus['additional-stats']  ?? {}, 'general', 'Additional Stats',  '📊')}
+       ${igLineKvField(sid, fname,  `bonuses-by-level.${lvl}.additional-damage`, bonus['additional-damage'] ?? {}, 'damage_type value%  (e.g. physical 10%)')}
+       ${igLineKvField(sid, fname,  `bonuses-by-level.${lvl}.defense-ignoring`,  bonus['defense-ignoring']  ?? {}, 'damage_type value%  (e.g. physical 50%)')}
        <button class="btn-icon btn-del" style="margin-top:6px"
          onclick="APP.igRemoveFromPath('${sid}','${escJs(fname)}','bonuses-by-level','${escJs(String(lvl))}')">🗑 Remove level</button>`,
       true)).join('');
@@ -2713,7 +3030,7 @@ function renderArrowCard(sid, fname, data) {
             onclick="if(confirm('Remove \\'${escJs(fname)}\\'?'))APP.igRemoveFile('${sid}','${escJs(fname)}')">🗑</button>
         </summary>
         <div class="item-card__body">
-          ${igCollapsible('📋 Base Item', moduleItemBaseRows(sid, fname, data), true)}
+          ${igCollapsible('📋 Base Item', arrowItemBaseRows(sid, fname, data), true)}
 
           ${igCollapsible('✨ Bonuses by level (${Object.keys(bonusByLvl).length})',
             bonusLevels + `
@@ -2724,8 +3041,8 @@ function renderArrowCard(sid, fname, data) {
                 onclick="APP.igAddToPath('${sid}','${escJs(fname)}','bonuses-by-level',document.getElementById('arrow-lvl-${fid}').value,{'additional-stats':{},'additional-damage':{},'defense-ignoring':{}})">+ Add level</button>
             </div>`, true)}
 
-          ${igCollapsible('💥 On-hit actions', igJson(sid, fname, 'on-hit-actions', data['on-hit-actions'] ?? {}))}
-          ${igCollapsible('🌀 On-fly actions', igJson(sid, fname, 'on-fly-actions', data['on-fly-actions'] ?? {}))}
+          ${igCollapsible('💥 On-hit actions', igActionGroups(sid, fname, 'on-hit-actions', data['on-hit-actions'] ?? {}), false)}
+          ${igCollapsible('🌀 On-fly actions', igActionGroups(sid, fname, 'on-fly-actions', data['on-fly-actions'] ?? {}), false)}
 
           ${igCollapsible('🎯 Target requirements', (() => {
             const tr = data['target-requirements'] ?? {};
@@ -2759,8 +3076,10 @@ function renderArrows(data, sid) {
       ${addBtn}
       <span class="ig-new-wrap">
         ${igTplSelect(sid, [
-          { value: 'basic',     label: 'Basic Arrow'     },
-          { value: 'explosive', label: 'Explosive Arrow' },
+          { value: 'pierce',             label: 'Piercing Arrow'     },
+          { value: 'flame',              label: 'Flame Arrow'        },
+          { value: 'snowball-explosive', label: 'Explosive Snowball'  },
+          { value: 'arrow-explosive',    label: 'Explosive Arrow'    },
         ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-arrow.yml"
           onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
@@ -2815,7 +3134,7 @@ function renderConsumableCard(sid, fname, data) {
             onclick="if(confirm('Remove \\'${escJs(fname)}\\'?'))APP.igRemoveFile('${sid}','${escJs(fname)}')">🗑</button>
         </summary>
         <div class="item-card__body">
-          ${igCollapsible('📋 Base Item', moduleItemBaseRows(sid, fname, data), true)}
+          ${igCollapsible('📋 Base Item', consumableItemBaseRows(sid, fname, data), true)}
 
           ${igCollapsible('❤️ Effects', `
             ${cardRow('Health restored',     igNum(sid, fname, 'effects.health',     effects.health     ?? 0))}
@@ -2823,22 +3142,20 @@ function renderConsumableCard(sid, fname, data) {
             ${cardRow('Saturation restored', igNum(sid, fname, 'effects.saturation', effects.saturation ?? 0))}
           `, true)}
 
-          ${igCollapsible('📊 Uses & variables by level', `
-            ${cardRow('Uses by level', igLineKvField(sid, fname, 'uses-by-level', usesByLvl, 'level: uses  (e.g. 1: 3)'))}
-            ${cardRow('Variables by level', igJson(sid, fname, 'variables-by-level', varsByLvl))}
-            <p class="muted small" style="margin-top:4px">Variables are accessible as <code>%varName%</code> in lore/name. Example: <code>{"1": {"health": 20}}</code></p>
+          ${igCollapsible('📊 Uses by level', `
+            ${cardRow('Uses by level', igLineKvField(sid, fname, 'uses-by-level', usesByLvl, 'level uses  (e.g. 1 3)'))}
           `, false)}
+          ${igCollapsible('🔢 Variables by level', igVariablesByLevel(sid, fname, 'variables-by-level', varsByLvl), false)}
 
           ${igCollapsible('👤 User requirements by level', `
-            ${cardRow('Level requirements', igLineKvField(sid, fname, 'user-requirements-by-level.level',        userReqs.level ?? {},          'item_level: required_player_level'))}
-            ${cardRow('Class requirements', igLineKvField(sid, fname, 'user-requirements-by-level.class',        userReqs.class ?? {},          'item_level: ClassName'))}
-            ${cardRow('Banned classes',     igLineKvField(sid, fname, 'user-requirements-by-level.banned-class', userReqs['banned-class'] ?? {}, 'item_level: ClassName'))}
+            ${cardRow('Level requirements', igLineKvField(sid, fname, 'user-requirements-by-level.level', userReqs.level ?? {}, 'item_level player_level  (e.g. 1 10)'))}
+            ${cardRow('Class requirements', igLineKvField(sid, fname, 'user-requirements-by-level.class', userReqs.class ?? {}, 'item_level ClassName  (e.g. 1 Warrior,Mage)'))}
+            <p class="muted small" style="margin-top:3px">Separate multiple classes with a comma. Leave empty to allow all classes.</p>
           `, false)}
 
           ${igCollapsible('🖱️ Usage (click actions)', `
-            ${cardRow('RIGHT click', igJson(sid, fname, 'usage.RIGHT', usage.RIGHT ?? { cooldown: 1.0, actions: {} }))}
-            ${cardRow('LEFT click',  igJson(sid, fname, 'usage.LEFT',  usage.LEFT  ?? {}))}
-            <p class="muted small" style="margin-top:4px">Cooldown in seconds. <code>actions</code> use Divinity action DSL.</p>
+            ${igCollapsible('👉 RIGHT click', igUsageSlot(sid, fname, 'usage.RIGHT', usage.RIGHT ?? {}), true)}
+            ${igCollapsible('👈 LEFT click',  igUsageSlot(sid, fname, 'usage.LEFT',  usage.LEFT  ?? {}), false)}
           `, false)}
 
           ${igCollapsible('🎯 Target requirements', (() => {
@@ -2872,8 +3189,9 @@ function renderConsumables(data, sid) {
       ${addBtn}
       <span class="ig-new-wrap">
         ${igTplSelect(sid, [
-          { value: 'potion', label: 'Health Potion' },
-          { value: 'food',   label: 'Food'          },
+          { value: 'small-loot-potion',   label: 'Loot Potion'   },
+          { value: 'small-health-potion', label: 'Health Potion'  },
+          { value: 'burger',              label: 'Burger'         },
         ])}
         <input id="ig-newfname-${sid}" class="edit-input ig-new-input" type="text" placeholder="my-item.yml"
           onkeydown="if(event.key==='Enter'){APP.igAddNewFile('${sid}',this.value,document.getElementById('ig-tpl-${sid}').value);this.value=''}">
@@ -2922,11 +3240,12 @@ function _buildScale(base, scaleFactor, level) {
 }
 
 function calcBuild() {
-  const totalDmg    = {};
-  const totalDef    = {};
-  const totalStats  = {};
-  const totalSkills = {};
-  const activeSets  = [];
+  const totalDmg         = {};
+  const totalDef         = {};
+  const totalStats       = {};
+  const totalFabledAttrs = {};   // raw avg attribute points from items
+  const totalSkills      = {};
+  const activeSets       = [];
 
   for (const slotDef of BUILD_SLOTS) {
     const slot = BUILD_STATE.slots[slotDef.key];
@@ -2957,11 +3276,11 @@ function calcBuild() {
       totalStats[stat] = (totalStats[stat] || 0) + avg;
     }
 
-    // Fabled attributes
+    // Fabled attributes — accumulate raw avg points per attribute
     for (const [attr, info] of Object.entries(gen['fabled-attributes']?.list || {})) {
       if (typeof info !== 'object' || (info.chance ?? 100) <= 0) continue;
       const avg = ((info.min ?? 0) + (info.max ?? 0)) / 2;
-      totalStats[`[FA] ${attr}`] = (totalStats[`[FA] ${attr}`] || 0) + avg;
+      totalFabledAttrs[attr] = (totalFabledAttrs[attr] || 0) + avg;
     }
 
     // Skills
@@ -2980,6 +3299,19 @@ function calcBuild() {
       for (const [t, v] of Object.entries(bonuses['damage-types']  || {})) totalDmg[t]   = (totalDmg[t]   || 0) + (parseFloat(String(v)) || 0);
       for (const [t, v] of Object.entries(bonuses['defense-types'] || {})) totalDef[t]   = (totalDef[t]   || 0) + (parseFloat(String(v)) || 0);
       for (const [s, v] of Object.entries(bonuses['item-stats']    || {})) totalStats[s] = (totalStats[s] || 0) + (parseFloat(String(v)) || 0);
+    }
+  }
+
+  // Evaluate Fabled Attribute stat formulas → contribute to totalStats
+  const faAttrDefs = STATE.loaded?.fabledAttributes;
+  if (faAttrDefs && typeof faAttrDefs === 'object') {
+    for (const [attr, pts] of Object.entries(totalFabledAttrs)) {
+      const attrDef = faAttrDefs[attr];
+      if (!attrDef?.stats || typeof attrDef.stats !== 'object') continue;
+      for (const [statId, formula] of Object.entries(attrDef.stats)) {
+        const val = evalFaFormula(String(formula ?? 'a'), pts);
+        if (val !== 0) totalStats[statId] = (totalStats[statId] || 0) + val;
+      }
     }
   }
 
@@ -3015,7 +3347,7 @@ function calcBuild() {
     }
   }
 
-  return { totalDmg, totalDef, totalStats, totalSkills, activeSets };
+  return { totalDmg, totalDef, totalStats, totalFabledAttrs, totalSkills, activeSets };
 }
 
 function renderBuildPreview(_data, _sid) {
@@ -3024,7 +3356,7 @@ function renderBuildPreview(_data, _sid) {
   const essFiles  = Object.keys(STATE.loaded?.essences?.files   || {});
   const runeFiles = Object.keys(STATE.loaded?.runes?.files      || {});
 
-  const { totalDmg, totalDef, totalStats, totalSkills, activeSets } = calcBuild();
+  const { totalDmg, totalDef, totalStats, totalFabledAttrs, totalSkills, activeSets } = calcBuild();
 
   // ---- Equipment slots ----
   const slotsHtml = BUILD_SLOTS.map(slotDef => {
@@ -3129,6 +3461,7 @@ function renderBuildPreview(_data, _sid) {
   const dmgEntries   = Object.entries(totalDmg);
   const defEntries   = Object.entries(totalDef);
   const statEntries  = Object.entries(totalStats);
+  const faEntries    = Object.entries(totalFabledAttrs);
   const skillEntries = Object.entries(totalSkills);
 
   // ---- Combat estimate ----
@@ -3138,25 +3471,65 @@ function renderBuildPreview(_data, _sid) {
   const mode        = formulaData?.['defense-formula'] ?? 'FACTOR';
   const customExpr  = formulaData?.['custom-defense-formula'] ?? '';
 
-  let combatHtml = '';
-  if (totalDmgSum > 0) {
-    const testDefs = [0, 25, 50, 100, 200];
-    const rows = testDefs.map(def => {
-      const out = evalForMode(mode, customExpr, { damage: totalDmgSum, defense: def });
+  // Formula label — show expression snippet when CUSTOM
+  const formulaLabel = mode === 'CUSTOM' && customExpr
+    ? `${esc(mode)}: <code style="font-size:10px;opacity:.75">${esc(customExpr.length > 50 ? customExpr.slice(0,50)+'…' : customExpr)}</code>`
+    : `<b>${esc(mode)}</b>`;
+
+  // Per-defense-type: reduction at 100 incoming damage
+  const defReductionRows = defEntries
+    .filter(([,v]) => v > 0)
+    .map(([type, defVal]) => {
+      const out = evalForMode(mode, customExpr, { damage: 100, defense: defVal });
+      const pct = out !== null ? ((1 - out / 100) * 100) : null;
+      const clr = pct !== null && pct >= 50 ? '#af8' : pct !== null && pct >= 25 ? '#fa8' : '#f88';
       return `<tr>
-        <td style="padding:2px 8px">def ${def}</td>
-        <td style="padding:2px 8px;text-align:right;color:#f88">${out !== null ? out.toFixed(1) : '?'}</td>
+        <td style="padding:2px 6px">${esc(type)}</td>
+        <td style="padding:2px 6px;text-align:right;color:#8af">${defVal.toFixed(1)}</td>
+        <td style="padding:2px 6px;text-align:right;color:#f88">${out !== null ? out.toFixed(1) : '?'}</td>
+        <td style="padding:2px 6px;text-align:right;color:${clr}">${pct !== null ? pct.toFixed(1)+'%' : '?'}</td>
       </tr>`;
     }).join('');
+
+  // Total damage vs hypothetical defense values
+  let combatHtml = '';
+  if (totalDmgSum > 0 || defEntries.length > 0) {
+    const testDefs = totalDmgSum > 0 ? [0, 25, 50, 100, 200] : [];
+    const dmgRows = testDefs.map(def => {
+      const out = evalForMode(mode, customExpr, { damage: totalDmgSum, defense: def });
+      const pct = out !== null ? ((1 - out / totalDmgSum) * 100) : null;
+      return `<tr>
+        <td style="padding:2px 8px">def ${def}</td>
+        <td style="padding:2px 8px;text-align:right;color:#f88">${out !== null ? out.toFixed(1) : '?'} dmg</td>
+        <td style="padding:2px 8px;text-align:right;color:#af8">${pct !== null ? pct.toFixed(1)+'% red.' : ''}</td>
+      </tr>`;
+    }).join('');
+
     combatHtml = `
       <div class="build-card" style="margin-top:12px">
-        <div class="build-card__title">⚡ Combat Estimate (formula: ${esc(mode)})</div>
+        <div class="build-card__title">⚡ Combat Estimate — formula: ${formulaLabel}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
           <span class="badge badge-red">Total dmg: ${totalDmgSum.toFixed(1)}</span>
           <span class="badge badge-blue">Total def: ${totalDefSum.toFixed(1)}</span>
         </div>
-        <table style="font-size:12px"><tbody>${rows}</tbody></table>
-        <p class="muted small" style="margin-top:6px">Values are statistical averages. Actual items vary by roll. Gem values added as flat.</p>
+
+        ${defReductionRows ? `
+        <div style="font-size:11px;font-weight:700;color:#8af;margin:6px 0 3px">🛡️ Defense reduction at 100 dmg input</div>
+        <table style="font-size:12px;width:100%">
+          <thead><tr style="color:#666;font-size:10px">
+            <th style="text-align:left;padding:1px 6px">Type</th>
+            <th style="text-align:right;padding:1px 6px">Def val</th>
+            <th style="text-align:right;padding:1px 6px">Dmg out</th>
+            <th style="text-align:right;padding:1px 6px">Reduction</th>
+          </tr></thead>
+          <tbody>${defReductionRows}</tbody>
+        </table>` : ''}
+
+        ${dmgRows ? `
+        <div style="font-size:11px;font-weight:700;color:#f88;margin:8px 0 3px">⚔️ Total build dmg vs hypothetical defense</div>
+        <table style="font-size:12px"><tbody>${dmgRows}</tbody></table>` : ''}
+
+        <p class="muted small" style="margin-top:6px">Averages only — actual rolls vary. Gem/set bonuses included.</p>
       </div>`;
   }
 
@@ -3211,6 +3584,11 @@ function renderBuildPreview(_data, _sid) {
             <div class="build-card__title" style="color:#af8">📈 Item Stats (avg)</div>
             <table style="width:100%;font-size:12px"><tbody>${statTable(statEntries,'#af8')}</tbody></table>
           </div>
+          ${faEntries.length ? `
+          <div class="build-card">
+            <div class="build-card__title" style="color:#da8">⭐ Fabled Attributes (avg pts)</div>
+            <table style="width:100%;font-size:12px"><tbody>${statTable(faEntries,'#da8')}</tbody></table>
+          </div>` : ''}
           <div class="build-card">
             <div class="build-card__title" style="color:#fa8">✨ Skills</div>
             <table style="width:100%;font-size:12px"><tbody>${statTable(skillEntries.map(([k,v])=>[k,`Lv ${v}`]),'#fa8')}</tbody></table>
@@ -3255,8 +3633,9 @@ function renderFabledAttributes(data, sid) {
   const entries = Object.entries(data).filter(([, v]) => v && typeof v === 'object');
 
   const cards = entries.map(([key, attr]) => {
-    const loreArr = Array.isArray(attr.lore) ? attr.lore : [];
-    const stats   = (attr.stats && typeof attr.stats === 'object' && !Array.isArray(attr.stats)) ? attr.stats : {};
+    const loreArr    = Array.isArray(attr.lore) ? attr.lore : [];
+    const lorePreviewId = `fa-lp-${sid}-${key.replace(/[^a-z0-9]/gi,'_')}`;
+    const stats      = (attr.stats && typeof attr.stats === 'object' && !Array.isArray(attr.stats)) ? attr.stats : {};
 
     // Stats rows: statId → formula string
     const statRows = Object.entries(stats).map(([statId, formula]) => `
@@ -3270,9 +3649,6 @@ function renderFabledAttributes(data, sid) {
         <button style="padding:1px 4px;background:#3a1e1e;border:1px solid #8a3a3a;border-radius:3px;color:#ea8f8f;cursor:pointer;font-size:10px;line-height:1.3"
           onclick="APP.faRemoveStat('${sid}','${escJs(key)}','${escJs(statId)}')">✕</button>
       </div>`).join('') || '<p class="muted small" style="margin:0 0 4px">No stats defined.</p>';
-
-    // Add-stat input with datalist
-    const addStatInputId = `fa-add-stat-${sid}-${key.replace(/[^a-z0-9]/gi,'_')}`;
 
     return `
       <div class="item-card" style="min-width:340px;max-width:520px">
@@ -3294,20 +3670,21 @@ function renderFabledAttributes(data, sid) {
               onclick="if(confirm('Remove attribute \\'${escJs(key)}\\'?'))APP.removeEntry('${sid}','${escJs(key)}')">🗑</button>
           </summary>
           <div class="item-card__body">
-            ${cardRow('Lore (icon-lore)', lineArrayField(sid, `${key}.lore`, loreArr))}
-            ${loreArr.length ? lorePreview(loreArr) : ''}
+            ${cardRow('Lore (icon-lore)', lineArrayFieldWithPreview(sid, `${key}.lore`, loreArr, lorePreviewId))}
+            <div id="${lorePreviewId}" class="lore-preview" style="margin-bottom:8px">
+              ${loreArr.filter(Boolean).map(l => `<div>${mc.toHtml(l)}</div>`).join('')}
+            </div>
 
             <div style="margin-top:10px">
-              <div style="font-size:12px;font-weight:700;color:#bbb;margin-bottom:5px">📐 Stats
-                <span class="muted small" style="font-weight:normal;font-size:10px">(a = attr level, v = stat val)</span>
+              <div style="font-size:12px;font-weight:700;color:#bbb;margin-bottom:4px">📐 Stats
+                <span class="muted small" style="font-weight:normal;font-size:10px">(a = attr level, v = current stat)</span>
               </div>
-              ${statRows}
-              <div style="display:flex;gap:5px;margin-top:5px;align-items:center">
-                <input id="${addStatInputId}" class="edit-input" style="font-size:11px;width:150px"
-                  placeholder="stat-id" list="${dlId}">
-                <button class="btn-add-entry" style="font-size:11px;padding:2px 8px"
-                  onclick="(function(){const el=document.getElementById('${addStatInputId}');APP.faAddStat('${sid}','${escJs(key)}',el.value);el.value=''})()">+ Add stat</button>
-              </div>
+              <textarea class="obj-textarea" rows="${Math.max(2, Object.keys(stats).length + 1)}"
+                placeholder="stat-id formula (one per line)"
+                list="${dlId}"
+                onblur="APP.faUpdateStats('${sid}','${escJs(key)}',this.value)"
+              >${esc(Object.entries(stats).map(([k, v]) => `${k} ${v}`).join('\n'))}</textarea>
+              <p class="muted small" style="margin-top:3px">Format: <code>stat-id formula</code> &nbsp;|&nbsp; Variables: <code>a</code> = attribute level, <code>v</code> = current stat value</p>
             </div>
           </div>
         </details>
