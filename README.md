@@ -1,3 +1,11 @@
-BUILDER IS MADE AS OPEN SOURCE, DO WHAT YOU WANT WITH IT. PULL REQUEST IF YOU WANT, I WON'T SUE YOU. BUILDER WAS MADE WITH HELP OF AI, CODE CAN AND WILL HAVE A LOT OF ERRORS OR MISTAKES. RIGHT NOW BUILDER IS NOT FINISHED AND IT'S GOING TO BE DEVELOPED TO BE THE TOOL FOR EASIER ITEM MAKING.
-BUILDER IS FOR MINECRAFT PLUGIN DIVINITY: https://github.com/magemonkeystudio/divinity.git
-REMEMBER TO ALWAYS DOWLOAD JSON, BUILDER IS NOT SAVING NOTHING RIGHT NOW. SET IN CONFIG AUTO SAVES.
+# Builder for Divinity
+
+Builder is an open-source tool designed to simplify item creation for the Minecraft plugin [Divinity](https://github.com/magemonkeystudio/divinity.git).
+
+## ⚠️ Important Notes & Disclaimers
+
+- **Development Status:** This tool is currently unfinished and under active development. Features and stability will improve over time.
+- **AI-Assisted Code:** Builder was developed with the assistance of AI. The code may contain bugs, errors, or unexpected behavior. Use at your own risk.
+- **Data Persistence:** Builder **does not** automatically save your work yet. Please remember to download your JSON file manually after making changes. You can configure auto-save settings in the config file for convenience.
+- **License & Contributions:** This project is open source. You are free to use, modify, and distribute it as you see fit. Pull requests are welcome!
+- Remember to **save**, link and zip file doesn't save anything. If you finish work, remember to dowload files as json or yml. 
