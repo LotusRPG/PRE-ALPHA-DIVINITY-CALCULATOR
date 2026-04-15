@@ -46,7 +46,7 @@ const SCHEMA = {
     },
     {
       label: 'Modules',
-      sections: ['itemgen', 'sets', 'gems', 'essences', 'runes', 'arrows', 'consumables'],
+      sections: ['itemgen', 'sets', 'gems', 'essences', 'runes', 'arrows', 'consumables', 'customItems'],
     },
     {
       label: 'Build Preview',
@@ -230,6 +230,18 @@ const SCHEMA = {
       multiFile:   true,
       renderer:    'renderConsumables',
       description: 'Consumable items (food, potions) — one YAML file per item. Drop multiple files at once.',
+    },
+
+    customItems: {
+      id:          'customItems',
+      label:       'Custom Items',
+      icon:        '🎁',
+      badge:       true,
+      searchable:  true,
+      file:        'modules/custom_items/items/',
+      multiFile:   true,
+      renderer:    'renderCustomItems',
+      description: 'Custom static items (no Divinity stats) — name, lore, material, enchantments, attributes, etc. One YAML file per item.',
     },
 
     build: {

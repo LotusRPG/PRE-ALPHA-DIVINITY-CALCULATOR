@@ -48,6 +48,8 @@ const BUILD_STATE = {
   baseManaRegen: 0,
   defCalcDmg: 100,
   buildTab: 'builder',
+  combatEnemyDefs: {},   // { defTypeId: number } — enemy defense values for attacker simulation
+  combatAtkDmg: 100,     // attacker damage value for defender simulation
   slots: {
     weapon:  { fname: '', level: 1, gems: ['','',''], gemLevels: [1,1,1], essence: '', essenceLevel: 1, rune: '', runeLevel: 1 },
     offhand: { fname: '', level: 1, gems: ['','',''], gemLevels: [1,1,1], essence: '', essenceLevel: 1, rune: '', runeLevel: 1 },
@@ -885,6 +887,17 @@ const APP = {
 
   buildSetTab(tab) {
     BUILD_STATE.buildTab = tab;
+    if (_activeSection === 'build') renderSection('build');
+  },
+
+  combatSetEnemyDef(defId, value) {
+    if (!BUILD_STATE.combatEnemyDefs) BUILD_STATE.combatEnemyDefs = {};
+    BUILD_STATE.combatEnemyDefs[defId] = parseFloat(value) || 0;
+    if (_activeSection === 'build') renderSection('build');
+  },
+
+  combatSetAtkDmg(value) {
+    BUILD_STATE.combatAtkDmg = parseFloat(value) || 0;
     if (_activeSection === 'build') renderSection('build');
   },
 
