@@ -46,7 +46,6 @@ const BUILD_STATE = {
   baseHp: 20,
   baseMana: 0,
   baseManaRegen: 0,
-  defCalcDmg: 100,
   buildTab: 'builder',
   combatEnemyDefs: {},   // { defTypeId: number } — enemy defense values for attacker simulation
   combatAtkDmg: 100,     // attacker damage value for defender simulation
@@ -520,14 +519,6 @@ const APP = {
     }
   },
 
-  /** Remove a stat entry from an attribute's stats map. */
-  faRemoveStat(sid, attrKey, statId) {
-    const stats = STATE.loaded[sid]?.[attrKey]?.stats;
-    if (!stats) return;
-    delete stats[statId];
-    renderSection(_activeSection);
-  },
-
   // ---- Table search ----
 
   filterTable(tableId, query) {
@@ -876,12 +867,6 @@ const APP = {
   buildSetBaseManaRegen(value) {
     const v = parseFloat(value);
     BUILD_STATE.baseManaRegen = (isNaN(v) || value === '') ? 0 : Math.max(0, v);
-    if (_activeSection === 'build') renderSection('build');
-  },
-
-  buildSetDefCalcDmg(value) {
-    const v = parseFloat(value);
-    BUILD_STATE.defCalcDmg = (isNaN(v) || value === '') ? 100 : Math.max(0, v);
     if (_activeSection === 'build') renderSection('build');
   },
 

@@ -209,7 +209,7 @@ const ITEM_TEMPLATES = {
         '%%BASE_LORE%%',
         '%ITEM_AMMO%', '%ITEM_HAND%', '%ENCHANTS%', '',
         '%USER_CLASS%', '%USER_BANNED_CLASS%', '%USER_LEVEL%', '',
-        '%ITEM_SET%', '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
+        '%ITEM_SET%',
         '', '%GENERATOR_SKILLS%',
         '%GENERATOR_DEFENSE%', '%GENERATOR_DAMAGE%',
         '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
@@ -483,7 +483,7 @@ const ITEM_TEMPLATES = {
         '%%BASE_LORE%%',
         '%ITEM_AMMO%', '%ITEM_HAND%', '%ENCHANTS%', '',
         '%USER_CLASS%', '%USER_BANNED_CLASS%', '%USER_LEVEL%', '',
-        '%ITEM_SET%', '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
+        '%ITEM_SET%',
         '', '%GENERATOR_SKILLS%',
         '%GENERATOR_DEFENSE%', '%GENERATOR_DAMAGE%',
         '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
@@ -520,7 +520,7 @@ const ITEM_TEMPLATES = {
         '%%BASE_LORE%%',
         '%ITEM_AMMO%', '%ITEM_HAND%', '%ENCHANTS%', '',
         '%USER_CLASS%', '%USER_BANNED_CLASS%', '%USER_LEVEL%', '',
-        '%ITEM_SET%', '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
+        '%ITEM_SET%',
         '', '%GENERATOR_SKILLS%',
         '%GENERATOR_DEFENSE%', '%GENERATOR_DAMAGE%',
         '%GENERATOR_DAMAGE_BUFFS%', '%GENERATOR_DEFENSE_BUFFS%', '%GENERATOR_PENETRATION%',
@@ -4255,42 +4255,12 @@ function renderBuildPreview(_data, _sid) {
 function renderFabledAttributes(data, sid) {
   if (!data || typeof data !== 'object') return '<div class="empty-state">No data.</div>';
 
-  // Build datalist from all 6 stat categories for autocomplete
-  const statCats = [
-    { key: 'damage',      label: 'Damage Types'   },
-    { key: 'defense',     label: 'Defense Types'  },
-    { key: 'general',     label: 'General Stats'  },
-    { key: 'penetration', label: 'Penetration'    },
-    { key: 'dmgbuff',    label: 'Damage Buffs %' },
-    { key: 'defbuff',    label: 'Defense Buffs %'},
-  ];
-  const dlId = `fa-stat-dl-${sid}`;
-  const datalistHtml = `<datalist id="${dlId}">${
-    statCats.flatMap(cat => {
-      const loaded = STATE.loaded?.[cat.key];
-      return loaded ? Object.keys(loaded).filter(k => !k.startsWith('_')).map(k => `<option value="${esc(k)}" label="${esc(cat.label)}">`) : [];
-    }).join('')
-  }</datalist>`;
-
   const entries = Object.entries(data).filter(([, v]) => v && typeof v === 'object');
 
   const cards = entries.map(([key, attr]) => {
-    const loreArr    = Array.isArray(attr.lore) ? attr.lore : [];
+    const loreArr       = Array.isArray(attr.lore) ? attr.lore : [];
     const lorePreviewId = `fa-lp-${sid}-${key.replace(/[^a-z0-9]/gi,'_')}`;
-    const stats      = (attr.stats && typeof attr.stats === 'object' && !Array.isArray(attr.stats)) ? attr.stats : {};
-
-    // Stats rows: statId → formula string
-    const statRows = Object.entries(stats).map(([statId, formula]) => `
-      <div style="display:flex;gap:5px;align-items:center;margin-bottom:3px">
-        <code style="min-width:130px;font-size:11px;color:#8fb8ea">${esc(statId)}</code>
-        <input class="edit-input" style="flex:1;font-size:11px" value="${esc(formula ?? 'a')}"
-          placeholder="formula"
-          title="a = attribute level, v = current stat value"
-          onblur="APP.updateField('${sid}','${escJs(key+'.stats.'+statId)}',this.value.trim())">
-        <span class="muted small" style="font-size:10px;white-space:nowrap">a=lvl</span>
-        <button style="padding:1px 4px;background:#3a1e1e;border:1px solid #8a3a3a;border-radius:3px;color:#ea8f8f;cursor:pointer;font-size:10px;line-height:1.3"
-          onclick="APP.faRemoveStat('${sid}','${escJs(key)}','${escJs(statId)}')">✕</button>
-      </div>`).join('') || '<p class="muted small" style="margin:0 0 4px">No stats defined.</p>';
+    const stats         = (attr.stats && typeof attr.stats === 'object' && !Array.isArray(attr.stats)) ? attr.stats : {};
 
     return `
       <div class="item-card" style="min-width:340px;max-width:520px">
@@ -4323,7 +4293,6 @@ function renderFabledAttributes(data, sid) {
               </div>
               <textarea class="obj-textarea" rows="${Math.max(2, Object.keys(stats).length + 1)}"
                 placeholder="stat-id formula (one per line)"
-                list="${dlId}"
                 onblur="APP.faUpdateStats('${sid}','${escJs(key)}',this.value)"
               >${esc(Object.entries(stats).map(([k, v]) => `${k} ${v}`).join('\n'))}</textarea>
               <p class="muted small" style="margin-top:3px">Format: <code>stat-id formula</code> &nbsp;|&nbsp; Variables: <code>a</code> = attribute level, <code>v</code> = current stat value</p>
@@ -4341,7 +4310,6 @@ function renderFabledAttributes(data, sid) {
     </div>`;
 
   return `
-    ${datalistHtml}
     <div class="entry-actions">${collapseAllBtn()}</div>
     <div class="cards-grid">${cards || '<div class="empty-state">No attributes yet.</div>'}</div>
     ${addRow}`;
